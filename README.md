@@ -34,6 +34,12 @@ npx --yes serve .
 - Moduler: `graph`, `vehicle`, `input`, `render`, `game`, …
 - Assets fra Flowtown (steder, køretøjer, tiles)
 
+## Agenter & tokens
+
+- [AGENTS.md](AGENTS.md) – regler + **Definition of Done**-skabelon  
+- [docs/TOKEN-WORKFLOW.md](docs/TOKEN-WORKFLOW.md) – billig implement→review-loop  
+- Workflow: `.grok/workflows/feature-loop.rhai` (score ≥ 8, max 1 fix-runde)
+
 ## Repo
 
 https://github.com/MattOMadsen/FlowTransport
