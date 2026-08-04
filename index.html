@@ -11,7 +11,7 @@
   <div id="app">
     <canvas id="game"></canvas>
 
-    <!-- Start menu -->
+    <!-- Start / nyt spil menu -->
     <section id="menu" class="panel-screen">
       <div class="menu-card">
         <h1>FlowTransport</h1>
@@ -20,9 +20,13 @@
           <span id="meta-level">Level 1</span>
           <span id="meta-xp">0 XP</span>
         </div>
-        <h2>Vælg bane</h2>
+
+        <button type="button" id="btn-continue" class="continue-btn hidden">▶️ Fortsæt spil</button>
+
+        <h2>Nyt spil – vælg bane</h2>
+        <p class="menu-note">Vælger du en bane, starter et <strong>helt nyt spil</strong> (fremskridt på banen nulstilles).</p>
         <div id="scenario-list" class="scenario-list"></div>
-        <p class="hint">Tip: Ét finger-træk tegner vej. To fingre zoomer. Tryk på by for at købe bil.</p>
+        <p class="hint">Tip: Ét finger-træk tegner vej. To fingre zoomer. Tryk på by for bil. 🗑️ sletter vej. Vand = bro (dyrere).</p>
       </div>
     </section>
 
@@ -33,14 +37,22 @@
         <div class="stat-pill soft" id="level">Lvl 1</div>
         <div class="stat-pill soft">📦 <span id="delivered">0</span></div>
         <div class="stat-pill soft">🚗 <span id="fleet">1</span></div>
-        <button type="button" id="btn-menu" class="icon-btn" title="Menu">☰</button>
+        <button type="button" id="btn-mute" class="icon-btn icon-btn-inline" title="Lyd">🔊</button>
+        <button type="button" id="btn-pause" class="icon-btn icon-btn-inline" title="Pause">⏸️</button>
+        <button type="button" id="btn-menu" class="icon-btn" title="Menu / nyt spil">☰</button>
       </header>
 
-      <div class="side-panel jobs-panel">
-        <h3>Opgaver</h3>
-        <ul id="job-list"></ul>
-        <h3>Mål</h3>
-        <ul id="goal-list"></ul>
+      <div class="side-panel jobs-panel" id="side-panel">
+        <button type="button" class="panel-toggle" id="btn-toggle-panel" aria-expanded="true">
+          <span>Opgaver &amp; mål</span>
+          <span class="chevron" id="panel-chevron">▼</span>
+        </button>
+        <div class="panel-body" id="panel-body">
+          <h3>Opgaver</h3>
+          <ul id="job-list"></ul>
+          <h3>Mål</h3>
+          <ul id="goal-list"></ul>
+        </div>
       </div>
 
       <div class="zoom-cluster">
@@ -48,8 +60,9 @@
       </div>
 
       <nav class="toolbar">
-        <button type="button" data-tool="draw" class="tool active" title="Tegn vej">✏️ Vej</button>
-        <button type="button" data-tool="pan" class="tool" title="Flyt kort">✋ Pan</button>
+        <button type="button" data-tool="draw" class="tool active" title="Tegn vej">✏️</button>
+        <button type="button" data-tool="erase" class="tool" title="Slet vej">🗑️</button>
+        <button type="button" data-tool="pan" class="tool" title="Flyt kort">✋</button>
         <button type="button" id="btn-undo" class="tool" title="Fortryd">↩️</button>
       </nav>
 
@@ -61,7 +74,7 @@
             <h3 class="shop-title">By</h3>
             <button type="button" id="shop-close" class="icon-btn">✕</button>
           </div>
-          <p class="muted">Køb bil – den henter opgaver automatisk.</p>
+          <p class="muted">Køb bil – den henter opgaver automatisk når der er vej.</p>
           <div class="shop-grid">
             <button type="button" data-buy="car" class="shop-item">
               <span>🚗 Personbil</span>

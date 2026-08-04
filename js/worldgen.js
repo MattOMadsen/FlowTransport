@@ -1,5 +1,6 @@
 /**
- * Decorative scenery: lakes, trees, forest patches (not collidable).
+ * Decorative scenery: lakes, trees, forest patches.
+ * Lakes must never cover place hubs.
  */
 
 function mulberry32(a) {
@@ -18,6 +19,49 @@ function tooCloseToPlace(x, y, places, minDist) {
   return false;
 }
 
+/** Approximate ellipse–point clearance (axis-aligned pad). */
+function lakeOverlapsPlace(L, p, pad = 55) {
+  const dx = p.x - L.x;
+  const dy = p.y - L.y;
+  const rx = L.rx + pad + (p.r || 30);
+  const ry = L.ry + pad + (p.r || 30);
+  return (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) < 1;
+}
+
+function lakeOk(L, places, pad = 55) {
+  for (const p of places) {
+    if (lakeOverlapsPlace(L, p, pad)) return false;
+  }
+  return true;
+}
+
+/**
+ * Push lake center away from any overlapping place until clear or give up.
+ */
+function resolveLake(L, places, pad = 60) {
+  for (let iter = 0; iter < 24; iter++) {
+    let moved = false;
+    for (const p of places) {
+      if (!lakeOverlapsPlace(L, p, pad)) continue;
+      const dx = L.x - p.x;
+      const dy = L.y - p.y;
+      let dist = Math.hypot(dx, dy) || 1;
+      const need = (L.rx + L.ry) * 0.55 + (p.r || 40) + pad;
+      if (dist < need) {
+        const push = (need - dist) / dist;
+        L.x += dx * push * 1.05;
+        L.y += dy * push * 1.05;
+        moved = true;
+      }
+    }
+    if (!moved && lakeOk(L, places, pad)) return true;
+  }
+  // Shrink and recheck
+  L.rx *= 0.65;
+  L.ry *= 0.65;
+  return lakeOk(L, places, pad);
+}
+
 /**
  * @returns {{ lakes: object[], trees: object[], forests: object[], hills: object[] }}
  */
@@ -28,40 +72,41 @@ export function buildScenery(worldW, worldH, places, seed = 1) {
   const forests = [];
   const hills = [];
 
-  const lakeCount = 2 + Math.floor(rng() * 3);
+  const lakeCount = 2 + Math.floor(rng() * 2);
   for (let i = 0; i < lakeCount; i++) {
-    let x;
-    let y;
-    let ok = false;
-    for (let t = 0; t < 40; t++) {
-      x = worldW * (0.12 + rng() * 0.76);
-      y = worldH * (0.12 + rng() * 0.76);
-      if (!tooCloseToPlace(x, y, places, 90)) {
-        ok = true;
-        break;
-      }
+    let L = null;
+    for (let t = 0; t < 50; t++) {
+      const cand = {
+        x: worldW * (0.14 + rng() * 0.72),
+        y: worldH * (0.14 + rng() * 0.72),
+        rx: 50 + rng() * 70,
+        ry: 36 + rng() * 50,
+        rot: rng() * Math.PI
+      };
+      if (tooCloseToPlace(cand.x, cand.y, places, 120)) continue;
+      if (!resolveLake(cand, places, 70)) continue;
+      L = cand;
+      break;
     }
-    if (!ok) continue;
-    lakes.push({
-      x,
-      y,
-      rx: 55 + rng() * 90,
-      ry: 40 + rng() * 60,
-      rot: rng() * Math.PI
-    });
+    if (L) lakes.push(L);
   }
 
-  // Near harbors: extra water blob
+  // Harbor water: offset away from hub, never under the building
   for (const p of places) {
     if (p.type !== 'harbor') continue;
-    lakes.push({
-      x: p.x - 40 - rng() * 50,
-      y: p.y + 30 + rng() * 40,
-      rx: 70 + rng() * 40,
-      ry: 45 + rng() * 30,
-      rot: -0.3 + rng() * 0.4
-    });
+    // Prefer seaward: slightly left/down from hub
+    const cand = {
+      x: p.x - (p.r + 100 + rng() * 40),
+      y: p.y + (p.r + 50 + rng() * 40),
+      rx: 55 + rng() * 35,
+      ry: 38 + rng() * 25,
+      rot: -0.25 + rng() * 0.3
+    };
+    if (resolveLake(cand, places, 75)) lakes.push(cand);
   }
+
+  // Final hard filter
+  const cleanLakes = lakes.filter((L) => lakeOk(L, places, 50));
 
   const forestCount = 4 + Math.floor(rng() * 4);
   for (let i = 0; i < forestCount; i++) {
@@ -71,7 +116,7 @@ export function buildScenery(worldW, worldH, places, seed = 1) {
     for (let t = 0; t < 30; t++) {
       x = worldW * (0.08 + rng() * 0.84);
       y = worldH * (0.08 + rng() * 0.84);
-      if (!tooCloseToPlace(x, y, places, 70) && !tooCloseToLake(x, y, lakes, 50)) {
+      if (!tooCloseToPlace(x, y, places, 75) && !tooCloseToLake(x, y, cleanLakes, 45)) {
         ok = true;
         break;
       }
@@ -83,26 +128,22 @@ export function buildScenery(worldW, worldH, places, seed = 1) {
     for (let k = 0; k < n; k++) {
       const ang = rng() * Math.PI * 2;
       const d = rng() * r * 0.85;
-      trees.push({
-        x: x + Math.cos(ang) * d,
-        y: y + Math.sin(ang) * d,
-        s: 0.7 + rng() * 0.7,
-        tint: rng()
-      });
+      const tx = x + Math.cos(ang) * d;
+      const ty = y + Math.sin(ang) * d;
+      if (tooCloseToPlace(tx, ty, places, 50)) continue;
+      trees.push({ x: tx, y: ty, s: 0.7 + rng() * 0.7, tint: rng() });
     }
   }
 
-  // Scattered trees
-  const scatter = 40 + Math.floor((worldW * worldH) / 50000);
+  const scatter = 35 + Math.floor((worldW * worldH) / 55000);
   for (let i = 0; i < scatter; i++) {
     const x = worldW * (0.05 + rng() * 0.9);
     const y = worldH * (0.05 + rng() * 0.9);
-    if (tooCloseToPlace(x, y, places, 55)) continue;
-    if (tooCloseToLake(x, y, lakes, 35)) continue;
+    if (tooCloseToPlace(x, y, places, 60)) continue;
+    if (tooCloseToLake(x, y, cleanLakes, 40)) continue;
     trees.push({ x, y, s: 0.55 + rng() * 0.55, tint: rng() });
   }
 
-  // Soft hills (visual only)
   const hillN = 5 + Math.floor(rng() * 4);
   for (let i = 0; i < hillN; i++) {
     hills.push({
@@ -113,7 +154,7 @@ export function buildScenery(worldW, worldH, places, seed = 1) {
     });
   }
 
-  return { lakes, trees, forests, hills };
+  return { lakes: cleanLakes, trees, forests, hills };
 }
 
 function tooCloseToLake(x, y, lakes, pad) {
@@ -121,6 +162,31 @@ function tooCloseToLake(x, y, lakes, pad) {
     const dx = (x - L.x) / (L.rx + pad);
     const dy = (y - L.y) / (L.ry + pad);
     if (dx * dx + dy * dy < 1) return true;
+  }
+  return false;
+}
+
+/** World point in any lake? (for bridges) */
+export function pointInLake(x, y, lakes) {
+  if (!lakes) return false;
+  for (const L of lakes) {
+    const dx = x - L.x;
+    const dy = y - L.y;
+    if ((dx * dx) / (L.rx * L.rx) + (dy * dy) / (L.ry * L.ry) < 1) return true;
+  }
+  return false;
+}
+
+export function strokeCrossesWater(points, lakes) {
+  if (!points || points.length < 2 || !lakes?.length) return false;
+  for (const p of points) {
+    if (pointInLake(p.x, p.y, lakes)) return true;
+  }
+  // Sample midpoints
+  for (let i = 1; i < points.length; i++) {
+    const mx = (points[i - 1].x + points[i].x) / 2;
+    const my = (points[i - 1].y + points[i].y) / 2;
+    if (pointInLake(mx, my, lakes)) return true;
   }
   return false;
 }

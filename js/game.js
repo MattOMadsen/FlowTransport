@@ -21,10 +21,12 @@ import { InputHandler } from './input.js';
 import { Renderer } from './render.js';
 import { worldToIso, isoToWorld } from './iso.js';
 import { loadGameAssets } from './assets.js';
-import { buildScenery } from './worldgen.js';
+import { buildScenery, strokeCrossesWater } from './worldgen.js';
+import { playRoad, playDeliver, playBuy, playError, playJobDone, isMuted, toggleMute } from './audio.js';
 
 const ROAD_COST_PER_PX = 0.42;
 const ROAD_BASE_COST = 18;
+const BRIDGE_MULT = 1.85;
 const SNAP_R = 40;
 
 export class Game {
@@ -52,14 +54,25 @@ export class Game {
     this.toastTimer = 0;
     this.toastText = '';
     this.running = false;
+    this.paused = false;
+    this.hasActiveSession = false;
     this._last = 0;
+    this._loopGen = 0;
 
     this.input = new InputHandler(canvas, {
       getTool: () => this.tool,
       getZoom: () => this.camera.zoom,
-      onDrawStart: (x, y) => this.beginStroke(x, y),
-      onDrawMove: (x, y) => this.moveStroke(x, y),
-      onDrawEnd: () => this.endStroke(),
+      onDrawStart: (x, y) => {
+        if (this.paused) return;
+        if (this.tool === 'draw') this.beginStroke(x, y);
+      },
+      onDrawMove: (x, y) => {
+        if (this.paused) return;
+        if (this.tool === 'draw') this.moveStroke(x, y);
+      },
+      onDrawEnd: () => {
+        if (this.tool === 'draw') this.endStroke();
+      },
       onCancelDraw: () => {
         this.strokePoints = [];
         this.strokePreview = [];
@@ -75,7 +88,10 @@ export class Game {
         const factor = dy > 0 ? 0.9 : 1.1;
         this.camera.setZoom(this.camera.zoom * factor, cx - r.left, cy - r.top);
       },
-      onTap: (x, y) => this.handleTap(x, y)
+      onTap: (x, y) => {
+        if (this.paused) return;
+        this.handleTap(x, y);
+      }
     });
   }
 
@@ -93,6 +109,7 @@ export class Game {
     return isoToWorld(view.x, view.y);
   }
 
+  /** Full new game on a scenario (from menu). */
   startScenario(id) {
     resetGraphIds();
     this.scenario = getScenario(id);
@@ -108,6 +125,9 @@ export class Game {
     this.undoStack = [];
     this.strokePoints = [];
     this.strokePreview = [];
+    this.paused = false;
+    this.tool = 'draw';
+    this.meta = loadMeta();
 
     this.places = buildPlaces(this.worldW, this.worldH, this.scenario.layout, this.scenario.seed);
     this.scenery = buildScenery(this.worldW, this.worldH, this.places, this.scenario.seed);
@@ -116,18 +136,54 @@ export class Game {
       p.nodeId = node.id;
     }
 
-    // Free starter car at capital
     const home = this.places.find((p) => p.type === 'capital') || this.places[0];
     this.vehicles.push(new Vehicle({ x: home.x, y: home.y, classId: 'car', homePlace: home }));
 
     this.seedJobs(4);
     this.renderer.resize();
     this.fitCamera();
+    this.hasActiveSession = true;
     this.running = true;
+    this._loopGen += 1;
+    const gen = this._loopGen;
     this._last = performance.now();
-    this.loop(this._last);
+    this.loop(this._last, gen);
     this.syncUI();
-    this.toast('Tegn veje mellem byerne 🛣️');
+    this.toast('Nyt spil – tegn veje mellem byerne 🛣️');
+  }
+
+  /** Leave to menu without destroying world (optional continue). */
+  goToMenu() {
+    this.running = false;
+    this.paused = true;
+  }
+
+  /** Resume current session from menu. */
+  resumeSession() {
+    if (!this.hasActiveSession || !this.scenario) return false;
+    this.paused = false;
+    this.running = true;
+    this._loopGen += 1;
+    const gen = this._loopGen;
+    this._last = performance.now();
+    this.loop(this._last, gen);
+    this.syncUI();
+    this.toast('Fortsætter spil');
+    return true;
+  }
+
+  togglePause() {
+    if (!this.hasActiveSession) return;
+    this.paused = !this.paused;
+    this.toast(this.paused ? 'Pause' : 'Fortsæt');
+    this.syncUI();
+  }
+
+  toggleMute() {
+    const m = toggleMute();
+    this.toast(m ? 'Lyd slået fra' : 'Lyd slået til');
+    this.syncUI();
+    return m;
   }
 
   fitCamera() {
@@ -193,7 +249,7 @@ export class Game {
   }
 
   beginStroke(sx, sy) {
-    if (this.tool !== 'draw') return;
+    if (this.tool !== 'draw' || this.paused) return;
     const w = this.screenToWorld(sx, sy);
     const snap = this.snapPoint(w.x, w.y);
     this.strokePoints = [{ x: snap.x, y: snap.y }];
@@ -231,8 +287,11 @@ export class Game {
       this.strokePreview = [];
       return;
     }
-    const cost = Math.round(ROAD_BASE_COST + len * ROAD_COST_PER_PX);
+    const overWater = strokeCrossesWater(simplified, this.scenery?.lakes);
+    let cost = Math.round(ROAD_BASE_COST + len * ROAD_COST_PER_PX);
+    if (overWater) cost = Math.round(cost * BRIDGE_MULT);
     if (this.money < cost) {
+      playError();
       this.toast(`Ikke nok penge (mangler ${cost - this.money} kr)`);
       this.strokePoints = [];
       this.strokePreview = [];
@@ -243,17 +302,53 @@ export class Game {
       id: `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
       points: simplified,
       lanes: 1,
-      paidCost: cost
+      paidCost: cost,
+      isBridge: overWater
     };
     this.roads.push(road);
     this.roadsById.set(road.id, road);
     this._registerRoad(road);
     this.undoStack.push({ type: 'road', roadId: road.id, cost });
     addXp(this.meta, XP_REWARDS.road);
-    this.toast(`Vej bygget (−${cost} kr)`);
+    playRoad();
+    this.toast(overWater ? `Bro bygget (−${cost} kr) 🌉` : `Vej bygget (−${cost} kr)`);
     this.strokePoints = [];
     this.strokePreview = [];
     this.tryAssignJobs();
+    this.syncUI();
+  }
+
+  /** Remove nearest road under world point (erase tool). */
+  eraseAt(wx, wy) {
+    let best = null;
+    let bestD = 36;
+    for (const road of this.roads) {
+      const c = closestOnPoly(road.points, wx, wy);
+      if (c.dist < bestD) {
+        bestD = c.dist;
+        best = road;
+      }
+    }
+    if (!best) {
+      playError();
+      this.toast('Ingen vej tæt på');
+      return;
+    }
+    this.removeRoad(best.id, true);
+  }
+
+  removeRoad(roadId, fromErase = false) {
+    const idx = this.roads.findIndex((r) => r.id === roadId);
+    if (idx < 0) return;
+    const road = this.roads[idx];
+    this.roads.splice(idx, 1);
+    this.roadsById.delete(roadId);
+    this.graph.removeRoad(roadId);
+    const refund = Math.round((road.paidCost || 0) * 0.85);
+    this.money += refund;
+    this._invalidateRoutes();
+    playRoad();
+    this.toast(fromErase ? `Vej slettet (+${refund} kr)` : `Fortryd (+${refund} kr)`);
     this.syncUI();
   }
 
@@ -372,20 +467,14 @@ export class Game {
   undo() {
     const act = this.undoStack.pop();
     if (!act || act.type !== 'road') {
+      playError();
       this.toast('Intet at fortryde');
       return;
     }
-    const idx = this.roads.findIndex((r) => r.id === act.roadId);
-    if (idx >= 0) {
-      this.roads.splice(idx, 1);
-      this.roadsById.delete(act.roadId);
-      this.graph.removeRoad(act.roadId);
-      const refund = Math.round(act.cost * 0.85);
-      this.money += refund;
-      this.toast(`Fortryd vej (+${refund} kr)`);
-      // Cancel vehicles whose route used this road
-      this._invalidateRoutes();
-      this.syncUI();
+    if (this.roadsById.has(act.roadId)) {
+      this.removeRoad(act.roadId, false);
+    } else {
+      this.toast('Vejen er allerede væk');
     }
   }
 
@@ -446,7 +535,10 @@ export class Game {
 
   handleTap(sx, sy) {
     const w = this.screenToWorld(sx, sy);
-    // Place hit?
+    if (this.tool === 'erase') {
+      this.eraseAt(w.x, w.y);
+      return;
+    }
     for (const p of this.places) {
       if (Math.hypot(p.x - w.x, p.y - w.y) < p.r * 1.3) {
         this.openShop(p);
@@ -481,6 +573,7 @@ export class Game {
     this.vehicles.push(
       new Vehicle({ x: place.x, y: place.y, classId, homePlace: place })
     );
+    playBuy();
     this.toast(`${VEHICLE_CLASSES[classId].label} købt (−${price} kr)`);
     this.closeShop();
     this.tryAssignJobs();
@@ -532,13 +625,13 @@ export class Game {
     return this.places.every((p) => seen.has(p.nodeId));
   }
 
-  loop(now) {
-    if (!this.running) return;
+  loop(now, gen) {
+    if (!this.running || gen !== this._loopGen) return;
     const dt = Math.min(0.05, (now - this._last) / 1000);
     this._last = now;
-    this.update(dt);
+    if (!this.paused) this.update(dt);
     this.renderer.drawScene(this, this.camera);
-    requestAnimationFrame((t) => this.loop(t));
+    requestAnimationFrame((t) => this.loop(t, gen));
   }
 
   update(dt) {
@@ -567,12 +660,14 @@ export class Game {
         addXp(this.meta, XP_REWARDS.deliver);
         this.meta.totalDelivered = (this.meta.totalDelivered || 0) + amount;
         saveMeta(this.meta);
+        playDeliver();
       },
       onJobDone: (v, job) => {
         if (job) {
           job.active = false;
           job.claimedBy = null;
           this.stats.jobsDone += 1;
+          playJobDone();
           this.toast(`Leveret: ${job.from.name} → ${job.to.name} ✓`);
         }
         this.tryAssignJobs();
@@ -640,10 +735,13 @@ export class Game {
         })
         .join('');
     }
-    // tool buttons
     document.querySelectorAll('[data-tool]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.tool === this.tool);
     });
+    const muteBtn = document.getElementById('btn-mute');
+    if (muteBtn) muteBtn.textContent = isMuted() ? '🔇' : '🔊';
+    const pauseBtn = document.getElementById('btn-pause');
+    if (pauseBtn) pauseBtn.textContent = this.paused ? '▶️' : '⏸️';
   }
 }
 

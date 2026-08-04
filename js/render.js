@@ -185,14 +185,26 @@ export class Renderer {
     ctx.lineWidth = width + 5;
     ctx.stroke();
 
-    ctx.strokeStyle = opts.preview ? 'rgba(55,65,81,0.55)' : '#4b5563';
+    const bridge = !!opts.bridge;
+    ctx.strokeStyle = opts.preview
+      ? 'rgba(55,65,81,0.55)'
+      : bridge
+        ? '#64748b'
+        : '#4b5563';
     ctx.lineWidth = width;
     ctx.stroke();
 
+    if (bridge && !opts.preview) {
+      // Bridge rails
+      ctx.strokeStyle = 'rgba(226,232,240,0.7)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
     if (!opts.preview) {
       ctx.save();
-      ctx.setLineDash([8, 10]);
-      ctx.strokeStyle = 'rgba(251,191,36,0.75)';
+      ctx.setLineDash(bridge ? [4, 8] : [8, 10]);
+      ctx.strokeStyle = bridge ? 'rgba(148,163,184,0.9)' : 'rgba(251,191,36,0.75)';
       ctx.lineWidth = 1.5;
       ctx.stroke();
       ctx.restore();
@@ -276,7 +288,10 @@ export class Renderer {
     this.drawWorldGround(game.worldW, game.worldH, game.scenery);
 
     for (const road of game.roads) {
-      this.drawRoad(road.points, { width: 12 + (road.lanes || 1) * 2 });
+      this.drawRoad(road.points, {
+        width: 12 + (road.lanes || 1) * 2,
+        bridge: !!road.isBridge
+      });
     }
     if (game.strokePreview?.length) this.drawPreview(game.strokePreview);
 
