@@ -28,7 +28,7 @@ export class Vehicle {
     /** @type {{ edgeId: string, reverse: boolean }[]} */
     this.route = [];
     this.routeIndex = 0;
-    this.t = 0; // 0→1 along current edge (in travel direction)
+    this.t = 0;
     this.loadTimer = 0;
     this.color = cls.kind === 'truck' ? '#b45309' : '#3b82f6';
   }
@@ -44,12 +44,12 @@ export class Vehicle {
   }
 
   /**
-   * @param {{ edges: {edgeId:string, reverse:boolean}[] }} path
+   * @param {{ edges: {edgeId:string, reverse:boolean}[] } | null} path
    */
   setRoute(path) {
     this.route = path?.edges ? [...path.edges] : [];
     this.routeIndex = 0;
-    this.t = 0.02;
+    this.t = this.route.length ? 0.02 : 0;
   }
 
   assignJob(job, pathToPickup, pathToDropoff) {
@@ -65,19 +65,28 @@ export class Vehicle {
    * @param {object} ctx
    * @param {import('./graph.js').RoadGraph} ctx.graph
    * @param {Map<string, object>} ctx.roadsById
+   * @param {(fromId:string,toId:string)=>object|null} [ctx.findPath]
+   * @param {(placeId:string)=>string|null} [ctx.nodeForPlace]
    * @param {number} dt
    */
   update(ctx, dt) {
     if (this.state === 'park') return;
+
     if (this.state === 'loading') {
       this.loadTimer -= dt;
       if (this.loadTimer <= 0) {
-        this.cargo = Math.min(this.capacity, this.job?.amount - (this.job?.delivered || 0) || this.capacity);
+        const remaining = Math.max(0, (this.job?.amount || 0) - (this.job?.delivered || 0));
+        this.cargo = Math.min(this.capacity, remaining || 0);
+        if (this.cargo <= 0) {
+          this._finishJob(ctx);
+          return;
+        }
         this.state = 'to_dropoff';
         this.setRoute(this._pathDropoff);
       }
       return;
     }
+
     if (this.state === 'unload') {
       this.loadTimer -= dt;
       if (this.loadTimer <= 0) {
@@ -87,12 +96,17 @@ export class Vehicle {
           this.job.delivered += delivered;
           ctx.onDeliver?.(this, delivered);
         }
-        // More to deliver on same job?
         if (this.job && this.job.delivered < this.job.amount) {
-          // Go back for another load if path exists
-          if (this._pathPickup && this._pathDropoff) {
+          // Multi-trip: path from dropoff (to) back to pickup (from)
+          const fromId = ctx.nodeForPlace?.(this.job.from.id);
+          const toId = ctx.nodeForPlace?.(this.job.to.id);
+          const back = fromId && toId ? ctx.findPath?.(toId, fromId) : null;
+          const forth = fromId && toId ? ctx.findPath?.(fromId, toId) : null;
+          if (back && forth) {
+            this._pathPickup = back;
+            this._pathDropoff = forth;
             this.state = 'to_pickup';
-            this.setRoute(this._pathPickup);
+            this.setRoute(back);
           } else {
             this._finishJob(ctx);
           }
@@ -117,19 +131,15 @@ export class Vehicle {
     const edge = ctx.graph.edges.get(step.edgeId);
     const road = edge ? ctx.roadsById.get(edge.roadId) : null;
     if (!edge || !road) {
-      this.clearRoute();
-      this.state = 'park';
-      this.job = null;
+      this._abortJob(ctx);
       return;
     }
 
     const pts = step.reverse ? [...road.points].reverse() : road.points;
     const len = edge.length || 1;
-    const dist = this.speed * dt;
-    this.t += dist / len;
+    this.t += (this.speed * dt) / len;
 
     if (this.t >= 0.99) {
-      this.t = 0.99;
       const pos = pointOnPoly(pts, 1);
       this.x = pos.x;
       this.y = pos.y;
@@ -151,11 +161,21 @@ export class Vehicle {
     if (pos.dx || pos.dy) this.angle = Math.atan2(pos.dy, pos.dx);
   }
 
+  _abortJob(ctx) {
+    if (this.job) {
+      this.job.claimedBy = null;
+    }
+    this.job = null;
+    this.cargo = 0;
+    this.state = 'park';
+    this.clearRoute();
+    ctx.onNeedAssign?.();
+  }
+
   _arriveNode(ctx) {
     if (this.state === 'to_pickup') {
       this.state = 'loading';
       this.loadTimer = 0.45;
-      // Snap to from place
       if (this.job?.from) {
         this.x = this.job.from.x;
         this.y = this.job.from.y;
@@ -176,6 +196,10 @@ export class Vehicle {
 
   _finishJob(ctx) {
     const job = this.job;
+    if (job) {
+      job.active = false;
+      job.claimedBy = null;
+    }
     this.job = null;
     this.cargo = 0;
     this.state = 'park';

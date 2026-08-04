@@ -2,7 +2,14 @@
  * FlowTransport game orchestrator – slim, graph-based.
  */
 
-import { RoadGraph, polyLength, closestOnPoly, resetGraphIds } from './graph.js';
+import {
+  RoadGraph,
+  polyLength,
+  closestOnPoly,
+  splitPolyAtT,
+  nearestNode,
+  resetGraphIds
+} from './graph.js';
 import { Vehicle } from './vehicle.js';
 import { buildPlaces } from './places.js';
 import { generateJob, jobComplete, jobLabel } from './jobs.js';
@@ -228,14 +235,85 @@ export class Game {
   _registerRoad(road) {
     const a = road.points[0];
     const b = road.points[road.points.length - 1];
-    // Prefer place nodes
-    let nodeA = this._placeNodeNear(a.x, a.y) || this.graph.getOrCreateNode(a.x, a.y, null, SNAP_R);
-    let nodeB = this._placeNodeNear(b.x, b.y) || this.graph.getOrCreateNode(b.x, b.y, null, SNAP_R);
-    // Snap endpoints visually to nodes
+    const nodeA = this._resolveEndpoint(a.x, a.y, road.id);
+    const nodeB = this._resolveEndpoint(b.x, b.y, road.id);
+    if (!nodeA || !nodeB || nodeA.id === nodeB.id) return;
     road.points[0] = { x: nodeA.x, y: nodeA.y };
     road.points[road.points.length - 1] = { x: nodeB.x, y: nodeB.y };
     const len = polyLength(road.points);
     this.graph.addEdge(nodeA.id, nodeB.id, road.id, len, 0);
+  }
+
+  /**
+   * Endpoint → node. Splits existing road if snap is mid-edge (T-junction).
+   * @param {string} [ignoreRoadId]
+   */
+  _resolveEndpoint(x, y, ignoreRoadId = null) {
+    const placeNode = this._placeNodeNear(x, y);
+    if (placeNode) return placeNode;
+    const near = this.graph.findNodeNear(x, y, SNAP_R);
+    if (near) return near;
+
+    // Snap mid-road → split into junction
+    let bestRoad = null;
+    let best = null;
+    for (const road of this.roads) {
+      if (road.id === ignoreRoadId) continue;
+      const c = closestOnPoly(road.points, x, y);
+      if (c.dist < SNAP_R && (!best || c.dist < best.dist)) {
+        best = c;
+        bestRoad = road;
+      }
+    }
+    if (bestRoad && best && best.t > 0.04 && best.t < 0.96) {
+      const junc = this._splitRoadAt(bestRoad, best.t);
+      if (junc) return junc;
+    }
+    return this.graph.getOrCreateNode(x, y, null, SNAP_R);
+  }
+
+  /** Split road geometry + graph into two segments at t */
+  _splitRoadAt(road, t) {
+    const split = splitPolyAtT(road.points, t);
+    if (!split) return null;
+    this.graph.removeRoad(road.id);
+
+    const junc = this.graph.getOrCreateNode(split.mid.x, split.mid.y, null, 12);
+    junc.x = split.mid.x;
+    junc.y = split.mid.y;
+
+    // Keep original id on first half
+    road.points = split.before;
+    const lenA = polyLength(road.points);
+    const endA = road.points[0];
+    const nodeA =
+      this._placeNodeNear(endA.x, endA.y) ||
+      this.graph.findNodeNear(endA.x, endA.y, SNAP_R) ||
+      this.graph.getOrCreateNode(endA.x, endA.y, null, SNAP_R);
+    road.points[0] = { x: nodeA.x, y: nodeA.y };
+    road.points[road.points.length - 1] = { x: junc.x, y: junc.y };
+    this.graph.addEdge(nodeA.id, junc.id, road.id, polyLength(road.points) || lenA, 0);
+
+    // Second half as new road
+    const roadB = {
+      id: `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+      points: split.after,
+      lanes: road.lanes || 1,
+      paidCost: 0
+    };
+    const endB = roadB.points[roadB.points.length - 1];
+    const nodeB =
+      this._placeNodeNear(endB.x, endB.y) ||
+      this.graph.findNodeNear(endB.x, endB.y, SNAP_R) ||
+      this.graph.getOrCreateNode(endB.x, endB.y, null, SNAP_R);
+    roadB.points[0] = { x: junc.x, y: junc.y };
+    roadB.points[roadB.points.length - 1] = { x: nodeB.x, y: nodeB.y };
+    this.roads.push(roadB);
+    this.roadsById.set(roadB.id, roadB);
+    this.graph.addEdge(junc.id, nodeB.id, roadB.id, polyLength(roadB.points), 0);
+
+    this._invalidateRoutes();
+    return junc;
   }
 
   _placeNodeNear(x, y) {
@@ -244,7 +322,7 @@ export class Game {
         return this.graph.nodes.get(p.nodeId);
       }
     }
-    return this.graph.findNodeNear(x, y, SNAP_R);
+    return null;
   }
 
   snapPoint(x, y) {
@@ -309,28 +387,36 @@ export class Game {
 
   _repathVehicle(v) {
     if (!v.job) return false;
-    const home = v.homePlace || v.job.from;
     const fromNode = this.graph.nodeForPlace(v.job.from.id);
     const toNode = this.graph.nodeForPlace(v.job.to.id);
-    const homeNode = this.graph.nodeForPlace(home.id) || fromNode;
     if (!fromNode || !toNode) return false;
-    if (v.state === 'to_pickup' || v.state === 'loading') {
-      const p1 = this.graph.findPath(homeNode.id, fromNode.id);
-      const p2 = this.graph.findPath(fromNode.id, toNode.id);
-      if (!p1 || !p2) return false;
+    const near = nearestNode(this.graph, v.x, v.y);
+    const curId = near?.node?.id;
+    if (!curId) return false;
+
+    const drop = this.graph.findPath(fromNode.id, toNode.id);
+    if (!drop) return false;
+    v._pathDropoff = drop;
+
+    if (v.state === 'to_pickup') {
+      const p1 = this.graph.findPath(curId, fromNode.id);
+      if (!p1) return false;
       v._pathPickup = p1;
-      v._pathDropoff = p2;
-      if (v.state === 'to_pickup') v.setRoute(p1);
+      v.setRoute(p1);
+      return true;
+    }
+    if (v.state === 'loading') {
+      v._pathPickup = { edges: [], length: 0 };
       return true;
     }
     if (v.state === 'to_dropoff') {
-      const p2 = this.graph.findPath(fromNode.id, toNode.id);
+      const p2 = this.graph.findPath(curId, toNode.id);
       if (!p2) return false;
-      v._pathDropoff = p2;
       v.setRoute(p2);
       return true;
     }
-    return true;
+    if (v.state === 'unload') return true;
+    return false;
   }
 
   handleTap(sx, sy) {
@@ -445,9 +531,12 @@ export class Game {
     const ctx = {
       graph: this.graph,
       roadsById: this.roadsById,
+      findPath: (a, b) => this.graph.findPath(a, b),
+      nodeForPlace: (placeId) => this.graph.nodeForPlace(placeId)?.id ?? null,
+      onNeedAssign: () => this.tryAssignJobs(),
       onDeliver: (v, amount) => {
         if (!v.job) return;
-        const share = Math.round((v.job.reward * amount) / v.job.amount);
+        const share = Math.round((v.job.reward * amount) / Math.max(1, v.job.amount));
         this.money += share;
         this.stats.delivered += amount;
         addXp(this.meta, XP_REWARDS.deliver);
@@ -457,6 +546,7 @@ export class Game {
       onJobDone: (v, job) => {
         if (job) {
           job.active = false;
+          job.claimedBy = null;
           this.stats.jobsDone += 1;
           this.toast(`Leveret: ${job.from.name} → ${job.to.name} ✓`);
         }
@@ -468,8 +558,8 @@ export class Game {
 
     for (const v of this.vehicles) v.update(ctx, dt);
 
-    // Clean finished jobs from list after a while
-    this.jobs = this.jobs.filter((j) => j.active || j.claimedBy);
+    // Drop inactive jobs
+    this.jobs = this.jobs.filter((j) => j.active);
 
     if (this.toastTimer > 0) {
       this.toastTimer -= dt;

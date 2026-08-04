@@ -244,3 +244,46 @@ export function closestOnPoly(points, x, y) {
   }
   return best;
 }
+
+/**
+ * Split polyline at parameter t ∈ (0,1).
+ * @returns {{ before: {x,y}[], after: {x,y}[], mid: {x,y} } | null}
+ */
+export function splitPolyAtT(points, t) {
+  if (!points || points.length < 2) return null;
+  t = Math.max(0.02, Math.min(0.98, t));
+  const mid = pointOnPoly(points, t);
+  const total = polyLength(points) || 1;
+  const target = t * total;
+  let acc = 0;
+  let splitIdx = 1;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const seg = Math.hypot(b.x - a.x, b.y - a.y);
+    if (acc + seg >= target || i === points.length - 1) {
+      splitIdx = i;
+      break;
+    }
+    acc += seg;
+  }
+  const before = [...points.slice(0, splitIdx), { x: mid.x, y: mid.y }];
+  const after = [{ x: mid.x, y: mid.y }, ...points.slice(splitIdx)];
+  // Drop degenerate
+  if (polyLength(before) < 12 || polyLength(after) < 12) return null;
+  return { before, after, mid: { x: mid.x, y: mid.y } };
+}
+
+/** Nearest graph node to world point (any radius) */
+export function nearestNode(graph, x, y) {
+  let best = null;
+  let bestD = Infinity;
+  for (const n of graph.nodes.values()) {
+    const d = Math.hypot(n.x - x, n.y - y);
+    if (d < bestD) {
+      bestD = d;
+      best = n;
+    }
+  }
+  return best ? { node: best, dist: bestD } : null;
+}
