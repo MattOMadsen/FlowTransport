@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#1e3a2f" />
+  <title>FlowTransport</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="game"></canvas>
+
+    <!-- Start menu -->
+    <section id="menu" class="panel-screen">
+      <div class="menu-card">
+        <h1>FlowTransport</h1>
+        <p class="tagline">Tegn veje · kør jobs · hold byerne forbundet</p>
+        <div class="meta-row">
+          <span id="meta-level">Level 1</span>
+          <span id="meta-xp">0 XP</span>
+        </div>
+        <h2>Vælg bane</h2>
+        <div id="scenario-list" class="scenario-list"></div>
+        <p class="hint">Tip: Ét finger-træk tegner vej. To fingre zoomer. Tryk på by for at købe bil.</p>
+      </div>
+    </section>
+
+    <!-- HUD -->
+    <div id="hud" class="hidden">
+      <header class="top-hud">
+        <div class="stat-pill" id="money">0 kr</div>
+        <div class="stat-pill soft" id="level">Lvl 1</div>
+        <div class="stat-pill soft">📦 <span id="delivered">0</span></div>
+        <div class="stat-pill soft">🚗 <span id="fleet">1</span></div>
+        <button type="button" id="btn-menu" class="icon-btn" title="Menu">☰</button>
+      </header>
+
+      <div class="side-panel jobs-panel">
+        <h3>Opgaver</h3>
+        <ul id="job-list"></ul>
+        <h3>Mål</h3>
+        <ul id="goal-list"></ul>
+      </div>
+
+      <div class="zoom-cluster">
+        <button type="button" id="btn-fit" class="icon-btn">Fit</button>
+      </div>
+
+      <nav class="toolbar">
+        <button type="button" data-tool="draw" class="tool active" title="Tegn vej">✏️ Vej</button>
+        <button type="button" data-tool="pan" class="tool" title="Flyt kort">✋ Pan</button>
+        <button type="button" id="btn-undo" class="tool" title="Fortryd">↩️</button>
+      </nav>
+
+      <div id="toast" class="toast"></div>
+
+      <div id="shop" class="sheet">
+        <div class="sheet-inner">
+          <div class="sheet-head">
+            <h3 class="shop-title">By</h3>
+            <button type="button" id="shop-close" class="icon-btn">✕</button>
+          </div>
+          <p class="muted">Køb bil – den henter opgaver automatisk.</p>
+          <div class="shop-grid">
+            <button type="button" data-buy="car" class="shop-item">
+              <span>🚗 Personbil</span>
+              <strong>220 kr</strong>
+              <small>Personer · cap 4</small>
+            </button>
+            <button type="button" data-buy="truck" class="shop-item">
+              <span>🚚 Lastbil</span>
+              <strong>380 kr</strong>
+              <small>Gods · cap 8</small>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
