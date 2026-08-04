@@ -21,10 +21,11 @@ import { InputHandler } from './input.js';
 import { Renderer } from './render.js';
 import { worldToIso, isoToWorld } from './iso.js';
 import { loadGameAssets } from './assets.js';
+import { buildScenery } from './worldgen.js';
 
 const ROAD_COST_PER_PX = 0.42;
 const ROAD_BASE_COST = 18;
-const SNAP_R = 32;
+const SNAP_R = 40;
 
 export class Game {
   constructor(canvas, ui) {
@@ -36,6 +37,7 @@ export class Game {
     this.roads = [];
     this.roadsById = new Map();
     this.places = [];
+    this.scenery = { lakes: [], trees: [], forests: [], hills: [] };
     this.vehicles = [];
     this.jobs = [];
     this.money = 1600;
@@ -108,6 +110,7 @@ export class Game {
     this.strokePreview = [];
 
     this.places = buildPlaces(this.worldW, this.worldH, this.scenario.layout, this.scenario.seed);
+    this.scenery = buildScenery(this.worldW, this.worldH, this.places, this.scenario.seed);
     for (const p of this.places) {
       const node = this.graph.addNode(p.x, p.y, p.id);
       p.nodeId = node.id;
@@ -117,7 +120,8 @@ export class Game {
     const home = this.places.find((p) => p.type === 'capital') || this.places[0];
     this.vehicles.push(new Vehicle({ x: home.x, y: home.y, classId: 'car', homePlace: home }));
 
-    this.seedJobs(3);
+    this.seedJobs(4);
+    this.renderer.resize();
     this.fitCamera();
     this.running = true;
     this._last = performance.now();
@@ -127,23 +131,44 @@ export class Game {
   }
 
   fitCamera() {
+    if (!this.worldW || !this.worldH) return;
+    const w = this.renderer.cssW || window.innerWidth;
+    const h = this.renderer.cssH || window.innerHeight;
+    if (!w || !h) return;
+
     const samples = [
       worldToIso(0, 0),
       worldToIso(this.worldW, 0),
       worldToIso(this.worldW, this.worldH),
       worldToIso(0, this.worldH)
     ];
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
+    // Include places so Fit frames gameplay, not empty corners alone
+    for (const p of this.places || []) {
+      samples.push(worldToIso(p.x, p.y));
+      samples.push(worldToIso(p.x + p.r, p.y + p.r));
+      samples.push(worldToIso(p.x - p.r, p.y - p.r));
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
     for (const s of samples) {
       minX = Math.min(minX, s.x);
       minY = Math.min(minY, s.y);
       maxX = Math.max(maxX, s.x);
       maxY = Math.max(maxY, s.y);
     }
-    this.camera.fitIsoBounds(minX, minY, maxX, maxY, this.renderer.cssW, this.renderer.cssH, 56);
+    // Padding in iso-space so labels/sprites aren’t clipped
+    const padIso = 80;
+    this.camera.fitIsoBounds(
+      minX - padIso,
+      minY - padIso,
+      maxX + padIso,
+      maxY + padIso,
+      w,
+      h,
+      40
+    );
   }
 
   seedJobs(n) {

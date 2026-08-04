@@ -8,33 +8,33 @@ export const SCENARIOS = [
   {
     id: 'intro',
     name: 'Første forbindelser',
-    blurb: 'Lille dal – lær at forbinde by og landbrug.',
+    blurb: 'Større dal med byer, farme, fabrik og havn – lær netværket.',
     seed: 101,
-    startMoney: 1600,
-    worldW: 1400,
-    worldH: 1100,
+    startMoney: 2200,
+    worldW: 2200,
+    worldH: 1700,
     unlockLevel: 1,
     layout: LAYOUT_INTRO,
     goals: [
-      { type: 'deliver', amount: 8, stars: 1 },
-      { type: 'deliver', amount: 20, stars: 2 },
+      { type: 'deliver', amount: 12, stars: 1 },
+      { type: 'deliver', amount: 30, stars: 2 },
       { type: 'connect_all', stars: 3 }
     ]
   },
   {
     id: 'coast',
     name: 'Kystlinjen',
-    blurb: 'Havn, fabrik og farme – mere gods, flere ruter.',
+    blurb: 'To havne, mange fabrikker og farme – mere gods og længere ruter.',
     seed: 202,
-    startMoney: 2000,
-    worldW: 1600,
-    worldH: 1200,
-    unlockLevel: 2,
+    startMoney: 2800,
+    worldW: 2600,
+    worldH: 1900,
+    unlockLevel: 1,
     layout: LAYOUT_COAST,
     goals: [
-      { type: 'deliver', amount: 12, stars: 1 },
-      { type: 'money', amount: 2500, stars: 2 },
-      { type: 'deliver', amount: 35, stars: 3 }
+      { type: 'deliver', amount: 18, stars: 1 },
+      { type: 'money', amount: 3200, stars: 2 },
+      { type: 'deliver', amount: 50, stars: 3 }
     ]
   }
 ];
