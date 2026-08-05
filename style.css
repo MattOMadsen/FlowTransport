@@ -327,6 +327,36 @@ html, body {
   text-decoration: line-through;
 }
 
+.side-panel li.job-item {
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 0.35rem 0.4rem;
+  margin: 0.1rem 0;
+  border-bottom: none;
+  border: 1px solid transparent;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.1rem;
+}
+
+.side-panel li.job-item:hover {
+  background: #f0fdfa;
+  border-color: #99f6e4;
+}
+
+.side-panel li.job-item.selected {
+  background: #ecfeff;
+  border-color: #22d3ee;
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.35);
+}
+
+.side-panel li.job-item .job-meta {
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
 .side-panel li.muted,
 .muted {
   color: var(--muted);
@@ -417,6 +447,8 @@ html, body {
   border-radius: 20px 20px 0 0;
   padding: 1rem 1rem calc(1rem + var(--safe-bottom));
   box-shadow: 0 -8px 30px rgba(0,0,0,0.2);
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
 }
 
 .sheet-head {
@@ -434,6 +466,10 @@ html, body {
   grid-template-columns: 1fr 1fr;
   gap: 0.6rem;
   margin-top: 0.75rem;
+}
+
+.shop-grid-4 {
+  grid-template-columns: 1fr 1fr;
 }
 
 .shop-item {
@@ -458,6 +494,86 @@ html, body {
 
 .shop-item small {
   color: var(--muted);
+}
+
+.shop-sub {
+  margin: 1rem 0 0.2rem;
+  font-size: 0.95rem;
+}
+
+.shop-hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+}
+
+.shop-fleet {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.shop-fleet-empty {
+  margin: 0.25rem 0;
+}
+
+.fleet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #e7e5e4;
+  border-radius: 12px;
+  background: #fafaf9;
+}
+
+.fleet-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.fleet-info strong {
+  font-size: 0.88rem;
+}
+
+.fleet-info small {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.fleet-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.fleet-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.35rem 0.55rem;
+  border-radius: 10px;
+  border: 2px solid #e7e5e4;
+  background: #fff;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.fleet-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.fleet-up {
+  border-color: #99f6e4;
+  color: #0f766e;
+}
+
+.fleet-sell {
+  border-color: #fecaca;
+  color: #b91c1c;
 }
 
 @media (max-width: 480px) {

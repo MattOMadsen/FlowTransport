@@ -91,6 +91,25 @@ document.getElementById('shop-close')?.addEventListener('click', () => game.clos
 document.querySelectorAll('[data-buy]').forEach((btn) => {
   btn.addEventListener('click', () => game.buyVehicle(btn.dataset.buy));
 });
+// Upgrade / sell (dynamiske knapper i flåde-listen)
+document.getElementById('shop')?.addEventListener('click', (e) => {
+  const up = e.target.closest?.('[data-upgrade-id]');
+  if (up) {
+    game.upgradeVehicle(up.getAttribute('data-upgrade-id'));
+    return;
+  }
+  const sell = e.target.closest?.('[data-sell-id]');
+  if (sell) {
+    game.sellVehicle(sell.getAttribute('data-sell-id'));
+  }
+});
+
+// Tryk på opgave → vis linje A→B på kortet
+document.getElementById('job-list')?.addEventListener('click', (e) => {
+  const item = e.target.closest?.('[data-job-id]');
+  if (!item) return;
+  game.selectJob(item.getAttribute('data-job-id'));
+});
 
 // Fold opgaver & mål
 const panel = document.getElementById('side-panel');

@@ -264,7 +264,8 @@ export class Renderer {
     ctx.translate(iso.x, iso.y);
     ctx.rotate(ang + Math.PI / 2);
     if (img && img.complete && img.naturalWidth) {
-      const s = v.kind === 'truck' ? 28 : 22;
+      const s =
+        v.classId === 'bus' ? 30 : v.classId === 'van' ? 24 : v.kind === 'truck' ? 28 : 22;
       ctx.drawImage(img, -s / 2, -s / 2, s, s);
     } else {
       ctx.fillStyle = v.color || '#3b82f6';
@@ -283,6 +284,89 @@ export class Renderer {
     if (points?.length >= 2) this.drawRoad(points, { preview: true, width: 12 });
   }
 
+  /**
+   * Magnet-ring + label mens man tegner vej.
+   * @param {{ kind:string, x:number, y:number, label?:string, strength?:number }|null} snap
+   * @param {{ x:number, y:number }|null} tip raw finger/mouse world pos
+   */
+  drawSnapFeedback(snap, tip = null) {
+    if (!snap || snap.kind === 'free') return;
+    const ctx = this.ctx;
+    const iso = worldToIso(snap.x, snap.y);
+    const pulse = 0.85 + 0.15 * Math.sin(performance.now() / 180);
+    const colors = {
+      place: {
+        fill: 'rgba(245, 158, 11, 0.4)',
+        stroke: '#d97706',
+        ring: 'rgba(251, 191, 36, 0.35)'
+      },
+      node: {
+        fill: 'rgba(14, 165, 233, 0.4)',
+        stroke: '#0284c7',
+        ring: 'rgba(56, 189, 248, 0.35)'
+      },
+      road: {
+        fill: 'rgba(16, 185, 129, 0.38)',
+        stroke: '#059669',
+        ring: 'rgba(52, 211, 153, 0.3)'
+      }
+    };
+    const c = colors[snap.kind] || colors.road;
+    const r = (14 + (snap.strength || 0.5) * 10) * pulse;
+
+    // Guide: finger → snap
+    if (tip && Math.hypot(snap.x - tip.x, snap.y - tip.y) > 6) {
+      const tipIso = worldToIso(tip.x, tip.y);
+      ctx.save();
+      ctx.setLineDash([6, 5]);
+      ctx.strokeStyle = c.stroke;
+      ctx.globalAlpha = 0.75;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(tipIso.x, tipIso.y);
+      ctx.lineTo(iso.x, iso.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.beginPath();
+    ctx.arc(iso.x, iso.y, r * 1.55, 0, Math.PI * 2);
+    ctx.fillStyle = c.ring;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(iso.x, iso.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = c.fill;
+    ctx.fill();
+    ctx.strokeStyle = c.stroke;
+    ctx.lineWidth = 2.6;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(iso.x - r * 0.55, iso.y);
+    ctx.lineTo(iso.x + r * 0.55, iso.y);
+    ctx.moveTo(iso.x, iso.y - r * 0.55);
+    ctx.lineTo(iso.x, iso.y + r * 0.55);
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    const label =
+      snap.kind === 'place'
+        ? `◎ ${snap.label || 'By'}`
+        : snap.kind === 'node'
+          ? '⊕ Kryds'
+          : '⊞ Vej';
+    ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.strokeText(label, iso.x, iso.y - r - 6);
+    ctx.fillStyle = c.stroke;
+    ctx.fillText(label, iso.x, iso.y - r - 6);
+  }
+
   drawScene(game, camera) {
     this.clear(camera);
     this.drawWorldGround(game.worldW, game.worldH, game.scenery);
@@ -294,6 +378,12 @@ export class Renderer {
       });
     }
     if (game.strokePreview?.length) this.drawPreview(game.strokePreview);
+
+    // Snap-magnet under tegning (start + slut)
+    if (game.strokeSnap) {
+      this.drawSnapFeedback(game.strokeSnap.start, null);
+      this.drawSnapFeedback(game.strokeSnap.end, game.strokeSnap.tip);
+    }
 
     const drawables = [];
     if (game.scenery?.trees) {
@@ -326,5 +416,70 @@ export class Renderer {
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }
+
+    const highlight = game.getSelectedJob?.() || null;
+    if (highlight) this.drawJobHighlight(highlight);
+  }
+
+  /** Stiplet linje + rings mellem job.from og job.to */
+  drawJobHighlight(job) {
+    if (!job?.from || !job?.to) return;
+    const ctx = this.ctx;
+    const a = worldToIso(job.from.x, job.from.y);
+    const b = worldToIso(job.to.x, job.to.y);
+    const color = job.typeMeta?.color || '#2563eb';
+    const dashOff = (performance.now() / 40) % 20;
+
+    ctx.save();
+    // Soft glow under line
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.22;
+    ctx.lineWidth = 10;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.95;
+    ctx.setLineDash([10, 10]);
+    ctx.lineDashOffset = -dashOff;
+    ctx.lineWidth = 3.2;
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Endpoint rings
+    for (const p of [a, b]) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 16, 0, Math.PI * 2);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.globalAlpha = 0.85;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.9;
+      ctx.fill();
+    }
+
+    // Labels A / B
+    ctx.globalAlpha = 1;
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    const labelY = (iso) => iso.y - 22;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.strokeText(job.from.name, a.x, labelY(a));
+    ctx.strokeText(job.to.name, b.x, labelY(b));
+    ctx.fillStyle = color;
+    ctx.fillText(job.from.name, a.x, labelY(a));
+    ctx.fillText(job.to.name, b.x, labelY(b));
+    ctx.restore();
   }
 }

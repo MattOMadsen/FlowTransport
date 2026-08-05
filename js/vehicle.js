@@ -3,19 +3,25 @@
  * States: park | to_pickup | loading | to_dropoff | unload
  */
 
-import { VEHICLE_CLASSES } from './fleet.js';
+import { VEHICLE_CLASSES, cargoCapacity, speedForClass } from './fleet.js';
 import { pointOnPoly } from './graph.js';
 
 let _vid = 1;
 
 export class Vehicle {
-  constructor({ x, y, classId = 'car', homePlace = null, owner = 'player' }) {
+  constructor({
+    x,
+    y,
+    classId = 'car',
+    homePlace = null,
+    owner = 'player',
+    upgradeRank = 0
+  }) {
     this.id = `v${_vid++}`;
     this.classId = classId;
+    this.upgradeRank = Math.max(0, upgradeRank | 0);
     const cls = VEHICLE_CLASSES[classId] || VEHICLE_CLASSES.car;
     this.kind = cls.kind;
-    this.speed = cls.speed;
-    this.capacity = cls.capacity;
     this.sprite = cls.sprite;
     this.owner = owner;
     this.homePlace = homePlace;
@@ -31,6 +37,13 @@ export class Vehicle {
     this.t = 0;
     this.loadTimer = 0;
     this.color = cls.kind === 'truck' ? '#b45309' : '#3b82f6';
+    this.applyStats();
+  }
+
+  /** Recompute speed/capacity from class + upgrade rank. */
+  applyStats() {
+    this.capacity = cargoCapacity(this.classId, this.upgradeRank);
+    this.speed = speedForClass(this.classId, this.upgradeRank);
   }
 
   get idle() {

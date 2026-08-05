@@ -57,9 +57,13 @@ export function jobLabel(job) {
   return `${job.typeMeta.icon} ${left} ${job.typeMeta.unit}: ${job.from.name} → ${job.to.name}`;
 }
 
+/**
+ * Mængder der typisk kræver 2+ ture med standard-bil (cap 4 / 8).
+ * Gods: 12–22 · Personer: 10–18
+ */
 export function randomAmount(typeKey) {
-  if (typeKey === 'cargo') return 3 + Math.floor(Math.random() * 5);
-  return 4 + Math.floor(Math.random() * 6);
+  if (typeKey === 'cargo') return 12 + Math.floor(Math.random() * 11);
+  return 10 + Math.floor(Math.random() * 9);
 }
 
 /**

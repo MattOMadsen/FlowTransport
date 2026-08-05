@@ -13,7 +13,14 @@ import {
 import { Vehicle } from './vehicle.js';
 import { buildPlaces } from './places.js';
 import { generateJob, jobComplete, jobLabel } from './jobs.js';
-import { VEHICLE_CLASSES, vehicleCanDoJob, buyPrice } from './fleet.js';
+import {
+  VEHICLE_CLASSES,
+  vehicleCanDoJob,
+  buyPrice,
+  upgradePrice,
+  canUpgrade,
+  sellPriceForClass
+} from './fleet.js';
 import { getScenario, evaluateStars, goalLabel } from './scenarios.js';
 import { loadMeta, saveMeta, addXp, setScenarioStars, XP_REWARDS } from './meta.js';
 import { Camera } from './camera.js';
@@ -46,6 +53,8 @@ export class Game {
     this.tool = 'draw';
     this.strokePreview = [];
     this.strokePoints = [];
+    /** Live snap feedback while drawing: { start, end, tip } */
+    this.strokeSnap = null;
     this.undoStack = [];
     this.scenario = null;
     this.stats = { delivered: 0, jobsDone: 0 };
@@ -53,6 +62,9 @@ export class Game {
     this.jobTimer = 0;
     this.toastTimer = 0;
     this.toastText = '';
+    /** @type {number|null} job id highlighted from task list */
+    this.selectedJobId = null;
+    this.selectedJobTimer = 0;
     this.running = false;
     this.paused = false;
     this.hasActiveSession = false;
@@ -76,6 +88,7 @@ export class Game {
       onCancelDraw: () => {
         this.strokePoints = [];
         this.strokePreview = [];
+        this.strokeSnap = null;
       },
       onPanStart: () => {},
       onPanMove: (dx, dy) => this.camera.pan(dx, dy),
@@ -122,9 +135,12 @@ export class Game {
     this.vehicles = [];
     this.jobs = [];
     this.stats = { delivered: 0, jobsDone: 0 };
+    this.selectedJobId = null;
+    this.selectedJobTimer = 0;
     this.undoStack = [];
     this.strokePoints = [];
     this.strokePreview = [];
+    this.strokeSnap = null;
     this.paused = false;
     this.tool = 'draw';
     this.meta = loadMeta();
@@ -136,6 +152,8 @@ export class Game {
       p.nodeId = node.id;
     }
 
+    // Gratis startbil i hovedby: man kan køre første job med det samme efter vej.
+    // (Ikke tvunget – bare onboarding; flåden udvides via by-shop.)
     const home = this.places.find((p) => p.type === 'capital') || this.places[0];
     this.vehicles.push(new Vehicle({ x: home.x, y: home.y, classId: 'car', homePlace: home }));
 
@@ -254,23 +272,29 @@ export class Game {
     const snap = this.snapPoint(w.x, w.y);
     this.strokePoints = [{ x: snap.x, y: snap.y }];
     this.strokePreview = [...this.strokePoints];
+    this.strokeSnap = { start: snap, end: snap, tip: { x: w.x, y: w.y } };
   }
 
   moveStroke(sx, sy) {
     if (!this.strokePoints.length) return;
     const w = this.screenToWorld(sx, sy);
     const last = this.strokePoints[this.strokePoints.length - 1];
+    // Altid opdatér snap-magnet (også mellem sample-punkter)
+    const snap = this.snapPoint(w.x, w.y);
+    const start =
+      this.strokeSnap?.start || this.snapPoint(this.strokePoints[0].x, this.strokePoints[0].y);
+    this.strokeSnap = { start, end: snap, tip: { x: w.x, y: w.y } };
+    this.strokePreview = [...this.strokePoints.slice(0, -1), { x: snap.x, y: snap.y }];
+
     if (Math.hypot(w.x - last.x, w.y - last.y) < 10) return;
     this.strokePoints.push({ x: w.x, y: w.y });
-    // Live snap preview of end
-    const snap = this.snapPoint(w.x, w.y);
-    this.strokePreview = [...this.strokePoints.slice(0, -1), { x: snap.x, y: snap.y }];
   }
 
   endStroke() {
     if (this.strokePoints.length < 2) {
       this.strokePoints = [];
       this.strokePreview = [];
+      this.strokeSnap = null;
       return;
     }
     // Snap ends
@@ -285,6 +309,7 @@ export class Game {
       this.toast('Vejen er for kort');
       this.strokePoints = [];
       this.strokePreview = [];
+      this.strokeSnap = null;
       return;
     }
     const overWater = strokeCrossesWater(simplified, this.scenery?.lakes);
@@ -295,6 +320,7 @@ export class Game {
       this.toast(`Ikke nok penge (mangler ${cost - this.money} kr)`);
       this.strokePoints = [];
       this.strokePreview = [];
+      this.strokeSnap = null;
       return;
     }
     this.money -= cost;
@@ -311,11 +337,28 @@ export class Game {
     this.undoStack.push({ type: 'road', roadId: road.id, cost });
     addXp(this.meta, XP_REWARDS.road);
     playRoad();
-    this.toast(overWater ? `Bro bygget (−${cost} kr) 🌉` : `Vej bygget (−${cost} kr)`);
+
+    const connected = this._snapIsConnected(first) && this._snapIsConnected(last);
+    if (!connected) {
+      this.toast(
+        overWater
+          ? `Bro bygget (−${cost} kr) – men ende snappede ikke ⚠️`
+          : `Vej bygget (−${cost} kr) – træk tættere på by/vej for at forbinde 🔗`
+      );
+    } else {
+      this.toast(overWater ? `Bro bygget (−${cost} kr) 🌉` : `Vej bygget (−${cost} kr)`);
+    }
+
     this.strokePoints = [];
     this.strokePreview = [];
+    this.strokeSnap = null;
     this.tryAssignJobs();
     this.syncUI();
+  }
+
+  /** place / road / node = graf-forbindelse; free = ny løs ende */
+  _snapIsConnected(snap) {
+    return snap && snap.kind && snap.kind !== 'free';
   }
 
   /** Remove nearest road under world point (erase tool). */
@@ -448,20 +491,60 @@ export class Game {
   snapPoint(x, y) {
     // Places first
     for (const p of this.places) {
-      if (Math.hypot(p.x - x, p.y - y) < p.r * 1.5) return { x: p.x, y: p.y, kind: 'place' };
+      const dist = Math.hypot(p.x - x, p.y - y);
+      const r = p.r * 1.5;
+      if (dist < r) {
+        return {
+          x: p.x,
+          y: p.y,
+          kind: 'place',
+          label: p.name,
+          dist,
+          strength: 1 - dist / r
+        };
+      }
     }
-    // Existing road
+    // Existing road (T-kryds / forlængelse)
     let best = null;
     for (const road of this.roads) {
       const c = closestOnPoly(road.points, x, y);
       if (c.dist < SNAP_R && (!best || c.dist < best.dist)) {
-        best = { x: c.x, y: c.y, kind: 'road', dist: c.dist };
+        best = {
+          x: c.x,
+          y: c.y,
+          kind: 'road',
+          label: 'Vej',
+          dist: c.dist,
+          strength: 1 - c.dist / SNAP_R
+        };
       }
     }
     if (best) return best;
     const n = this.graph.findNodeNear(x, y, SNAP_R);
-    if (n) return { x: n.x, y: n.y, kind: 'node' };
-    return { x, y, kind: 'free' };
+    if (n) {
+      const dist = Math.hypot(n.x - x, n.y - y);
+      // Node med sted-id tæller som by
+      if (n.placeId) {
+        const place = this.places.find((p) => p.id === n.placeId);
+        return {
+          x: n.x,
+          y: n.y,
+          kind: 'place',
+          label: place?.name || 'By',
+          dist,
+          strength: 1 - dist / SNAP_R
+        };
+      }
+      return {
+        x: n.x,
+        y: n.y,
+        kind: 'node',
+        label: 'Kryds',
+        dist,
+        strength: 1 - dist / SNAP_R
+      };
+    }
+    return { x, y, kind: 'free', label: null, dist: 0, strength: 0 };
   }
 
   undo() {
@@ -554,11 +637,63 @@ export class Game {
     panel.querySelector('.shop-title').textContent = place.name;
     panel.classList.add('open');
     this._shopPlace = place;
+    this.renderShopFleet();
   }
 
   closeShop() {
     this.ui.shop?.classList.remove('open');
     this._shopPlace = null;
+  }
+
+  /** Vehicles stationed at the open shop city (homePlace). */
+  vehiclesAtShop() {
+    const place = this._shopPlace;
+    if (!place) return [];
+    return this.vehicles.filter((v) => v.homePlace?.id === place.id);
+  }
+
+  renderShopFleet() {
+    const list = this.ui.shop?.querySelector('#shop-fleet');
+    if (!list) return;
+    const at = this.vehiclesAtShop();
+    if (!at.length) {
+      list.innerHTML = '<p class="muted shop-fleet-empty">Ingen biler i denne by endnu.</p>';
+      return;
+    }
+    list.innerHTML = at
+      .map((v) => {
+        const cls = VEHICLE_CLASSES[v.classId] || VEHICLE_CLASSES.car;
+        const rank = v.upgradeRank | 0;
+        const busy = !v.idle;
+        const upOk = canUpgrade(rank);
+        const upP = upgradePrice(rank, v.classId);
+        const sellP = sellPriceForClass(v.classId, rank);
+        const icon = cls.kind === 'truck' ? '🚚' : '🚗';
+        const status = busy ? 'På job…' : 'Ledig';
+        const rankLabel = rank > 0 ? ` · ★${rank}` : '';
+        return `
+          <div class="fleet-row" data-vid="${v.id}">
+            <div class="fleet-info">
+              <strong>${icon} ${cls.label}${rankLabel}</strong>
+              <small>Cap ${v.capacity} · ${status}</small>
+            </div>
+            <div class="fleet-actions">
+              <button type="button" class="fleet-btn fleet-up"
+                data-upgrade-id="${v.id}"
+                ${busy || !upOk ? 'disabled' : ''}
+                title="${upOk ? `Opgrader last (+1, −${upP} kr)` : 'Max opgraderet'}">
+                ${upOk ? `⬆ ${upP}` : 'Max'}
+              </button>
+              <button type="button" class="fleet-btn fleet-sell"
+                data-sell-id="${v.id}"
+                ${busy ? 'disabled' : ''}
+                title="Sælg bil (+${sellP} kr)">
+                Sælg ${sellP}
+              </button>
+            </div>
+          </div>`;
+      })
+      .join('');
   }
 
   buyVehicle(classId) {
@@ -575,8 +710,57 @@ export class Game {
     );
     playBuy();
     this.toast(`${VEHICLE_CLASSES[classId].label} købt (−${price} kr)`);
-    this.closeShop();
+    this.renderShopFleet();
     this.tryAssignJobs();
+    this.syncUI();
+  }
+
+  upgradeVehicle(vehicleId) {
+    const v = this.vehicles.find((x) => x.id === vehicleId);
+    if (!v) return;
+    if (!v.idle) {
+      this.toast('Kan ikke opgradere midt i et job');
+      playError();
+      return;
+    }
+    if (!canUpgrade(v.upgradeRank)) {
+      this.toast('Allerede max opgraderet');
+      return;
+    }
+    const price = upgradePrice(v.upgradeRank, v.classId);
+    if (this.money < price) {
+      this.toast('Ikke nok penge');
+      playError();
+      return;
+    }
+    this.money -= price;
+    v.upgradeRank += 1;
+    v.applyStats();
+    playBuy();
+    this.toast(`Opgraderet til ★${v.upgradeRank} (cap ${v.capacity})`);
+    this.renderShopFleet();
+    this.syncUI();
+  }
+
+  sellVehicle(vehicleId) {
+    const v = this.vehicles.find((x) => x.id === vehicleId);
+    if (!v) return;
+    if (!v.idle) {
+      this.toast('Kan ikke sælge bil midt i et job');
+      playError();
+      return;
+    }
+    if (this.vehicles.length <= 1) {
+      this.toast('Du skal have mindst én bil');
+      playError();
+      return;
+    }
+    const refund = sellPriceForClass(v.classId, v.upgradeRank);
+    this.money += refund;
+    this.vehicles = this.vehicles.filter((x) => x.id !== vehicleId);
+    playBuy();
+    this.toast(`Solgt (+${refund} kr)`);
+    this.renderShopFleet();
     this.syncUI();
   }
 
@@ -606,6 +790,30 @@ export class Game {
       candidate.assignJob(job, pickPath, dropPath);
       free.splice(free.indexOf(candidate), 1);
     }
+  }
+
+  /** Tap opgave i listen → fremhæv A→B på kortet */
+  selectJob(jobId) {
+    const id = Number(jobId);
+    if (!Number.isFinite(id)) return;
+    const job = this.jobs.find((j) => j.id === id && j.active);
+    if (!job) return;
+    if (this.selectedJobId === id) {
+      this.selectedJobId = null;
+      this.selectedJobTimer = 0;
+      this.toast('Rute skjult');
+      this.syncUI();
+      return;
+    }
+    this.selectedJobId = id;
+    this.selectedJobTimer = 14;
+    this.toast(`${job.from.name} → ${job.to.name}`);
+    this.syncUI();
+  }
+
+  getSelectedJob() {
+    if (this.selectedJobId == null) return null;
+    return this.jobs.find((j) => j.id === this.selectedJobId && j.active) || null;
   }
 
   allPlacesConnected() {
@@ -669,6 +877,10 @@ export class Game {
           this.stats.jobsDone += 1;
           playJobDone();
           this.toast(`Leveret: ${job.from.name} → ${job.to.name} ✓`);
+          if (this.selectedJobId === job.id) {
+            this.selectedJobId = null;
+            this.selectedJobTimer = 0;
+          }
         }
         this.tryAssignJobs();
         this.checkStars();
@@ -680,6 +892,15 @@ export class Game {
 
     // Drop inactive jobs
     this.jobs = this.jobs.filter((j) => j.active);
+    if (this.selectedJobId != null && !this.jobs.some((j) => j.id === this.selectedJobId)) {
+      this.selectedJobId = null;
+      this.selectedJobTimer = 0;
+    }
+
+    if (this.selectedJobTimer > 0) {
+      this.selectedJobTimer -= dt;
+      if (this.selectedJobTimer <= 0) this.selectedJobId = null;
+    }
 
     if (this.toastTimer > 0) {
       this.toastTimer -= dt;
@@ -719,7 +940,16 @@ export class Game {
     if (this.ui.jobs) {
       const active = this.jobs.filter((j) => j.active).slice(0, 8);
       this.ui.jobs.innerHTML = active.length
-        ? active.map((j) => `<li>${jobLabel(j)}${j.claimedBy ? ' 🚗' : ''}</li>`).join('')
+        ? active
+            .map((j) => {
+              const sel = j.id === this.selectedJobId ? ' selected' : '';
+              const left = Math.max(0, j.amount - j.delivered);
+              return `<li class="job-item${sel}" data-job-id="${j.id}" role="button" tabindex="0" title="Vis rute på kortet">
+                ${jobLabel(j)}${j.claimedBy ? ' 🚗' : ''}
+                <span class="job-meta">${left}/${j.amount}</span>
+              </li>`;
+            })
+            .join('')
         : '<li class="muted">Ingen opgaver endnu</li>';
     }
     if (this.ui.goals && this.scenario) {

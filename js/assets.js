@@ -68,7 +68,13 @@ export function getPlaceImage(type, variant = 0) {
 }
 
 export function getVehicleImage(classId) {
-  return vehicleImgs[classId] || vehicleImgs.car;
+  if (classId && vehicleImgs[classId]) return vehicleImgs[classId];
+  if (classId === 'bus') return vehicleImgs.bus || vehicleImgs.car;
+  if (classId === 'van') return vehicleImgs.van || vehicleImgs.truck;
+  if (classId === 'truck' || classId === 'truck_heavy') {
+    return vehicleImgs.truck || vehicleImgs.van || vehicleImgs.car;
+  }
+  return vehicleImgs.car;
 }
 
 export function getTileImage(name) {

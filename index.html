@@ -75,11 +75,21 @@
             <button type="button" id="shop-close" class="icon-btn">✕</button>
           </div>
           <p class="muted">Køb bil – den henter opgaver automatisk når der er vej.</p>
-          <div class="shop-grid">
+          <div class="shop-grid shop-grid-4">
             <button type="button" data-buy="car" class="shop-item">
               <span>🚗 Personbil</span>
               <strong>220 kr</strong>
               <small>Personer · cap 4</small>
+            </button>
+            <button type="button" data-buy="bus" class="shop-item">
+              <span>🚌 Bus</span>
+              <strong>420 kr</strong>
+              <small>Mange · cap 10</small>
+            </button>
+            <button type="button" data-buy="van" class="shop-item">
+              <span>🚐 Varebil</span>
+              <strong>300 kr</strong>
+              <small>Hurtig gods · cap 5</small>
             </button>
             <button type="button" data-buy="truck" class="shop-item">
               <span>🚚 Lastbil</span>
@@ -87,6 +97,9 @@
               <small>Gods · cap 8</small>
             </button>
           </div>
+          <h4 class="shop-sub">Flåde i byen</h4>
+          <p class="muted shop-hint">Opgrader last (★) eller sælg ledig bil (~55&nbsp;%).</p>
+          <div id="shop-fleet" class="shop-fleet"></div>
         </div>
       </div>
     </div>
