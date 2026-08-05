@@ -111,13 +111,12 @@ export class RoadGraph {
     for (const eid of list) {
       const e = this.edges.get(eid);
       if (!e) continue;
-      if (e.a === nodeId && e.oneWay !== -1) {
+      const ow = e.oneWay | 0;
+      // oneWay: 0 = tovejs, 1 = kun a→b, -1 = kun b→a
+      if (e.a === nodeId && ow !== -1) {
         out.push({ edge: e, next: e.b, reverse: false });
-      } else if (e.b === nodeId && e.oneWay !== 1) {
+      } else if (e.b === nodeId && ow !== 1) {
         out.push({ edge: e, next: e.a, reverse: true });
-      } else if (!e.oneWay) {
-        if (e.a === nodeId) out.push({ edge: e, next: e.b, reverse: false });
-        else out.push({ edge: e, next: e.a, reverse: true });
       }
     }
     return out;

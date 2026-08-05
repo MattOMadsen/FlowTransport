@@ -261,7 +261,10 @@ export class Game {
       };
       this.roads.push(road);
       this.roadsById.set(road.id, road);
-      this._registerRoad(road);
+      if (!this._registerRoad(road)) {
+        this.roads.pop();
+        this.roadsById.delete(road.id);
+      }
     }
 
     const byId = new Map(this.places.map((p) => [p.id, p]));
@@ -550,7 +553,20 @@ export class Game {
     };
     this.roads.push(road);
     this.roadsById.set(road.id, road);
-    this._registerRoad(road);
+    const okGraph = this._registerRoad(road);
+    if (!okGraph) {
+      // Visuel vej uden graf → biler kan aldrig køre. Rul tilbage.
+      this.roads.pop();
+      this.roadsById.delete(road.id);
+      this.money += cost;
+      playError();
+      this.toast('Vejen forbandt ikke – træk fra by til by (snap-ring)');
+      this.strokePoints = [];
+      this.strokePreview = [];
+      this.strokeSnap = null;
+      this.syncUI();
+      return;
+    }
     this.undoStack.push({ type: 'road', roadId: road.id, cost });
     addXp(this.meta, XP_REWARDS.road);
     playRoad();
@@ -559,13 +575,23 @@ export class Game {
     bumpDaily(this.daily, 'roads', 1);
     this.refreshDailyUi();
 
+    // Sørg for at spillet kører (fx efter end-run/pause)
+    this.paused = false;
+
     const connected = this._snapIsConnected(first) && this._snapIsConnected(last);
+    const assignedBefore = this.vehicles.filter((v) => !v.idle).length;
+    this.tryAssignJobs();
+    const assignedAfter = this.vehicles.filter((v) => !v.idle).length;
+    const started = assignedAfter > assignedBefore;
+
     if (!connected) {
       this.toast(
         overWater
           ? `Bro bygget (−${cost} kr) – men ende snappede ikke ⚠️`
           : `Vej bygget (−${cost} kr) – træk tættere på by/vej for at forbinde 🔗`
       );
+    } else if (started) {
+      this.toast(overWater ? `Bro bygget (−${cost} kr) 🌉 bil kører` : `Vej bygget (−${cost} kr) · bil kører`);
     } else {
       this.toast(overWater ? `Bro bygget (−${cost} kr) 🌉` : `Vej bygget (−${cost} kr)`);
     }
@@ -573,7 +599,6 @@ export class Game {
     this.strokePoints = [];
     this.strokePreview = [];
     this.strokeSnap = null;
-    this.tryAssignJobs();
     this.persistSession();
     this.syncUI();
   }
@@ -661,34 +686,47 @@ export class Game {
     this.syncUI();
   }
 
+  /**
+   * Register road in graph. @returns {boolean} false if endpoints invalid / same node
+   */
   _registerRoad(road) {
     // Hold alle punkter inde på brættet
     road.points = (road.points || []).map((p) => this.clampWorld(p.x, p.y));
+    if (road.points.length < 2) return false;
     const a = road.points[0];
     const b = road.points[road.points.length - 1];
     const nodeA = this._resolveEndpoint(a.x, a.y, road.id);
     const nodeB = this._resolveEndpoint(b.x, b.y, road.id);
-    if (!nodeA || !nodeB || nodeA.id === nodeB.id) return;
+    if (!nodeA || !nodeB || nodeA.id === nodeB.id) return false;
+    // Snap geometry til knuder (by-hubs uændret)
     road.points[0] = { x: nodeA.x, y: nodeA.y };
     road.points[road.points.length - 1] = { x: nodeB.x, y: nodeB.y };
-    // Clamp igen hvis nodes alligevel er ude (må ikke ske for place hubs)
-    for (let i = 0; i < road.points.length; i++) {
+    // Mellempunkter clamp – ender må ikke flyttes væk fra by-hub
+    for (let i = 1; i < road.points.length - 1; i++) {
       road.points[i] = this.clampWorld(road.points[i].x, road.points[i].y);
     }
     const len = polyLength(road.points);
-    this.graph.addEdge(nodeA.id, nodeB.id, road.id, len, 0);
+    if (len < 1) return false;
+    const edge = this.graph.addEdge(nodeA.id, nodeB.id, road.id, len, 0);
+    return !!edge;
   }
 
   /**
    * Endpoint → node. Splits existing road if snap is mid-edge (T-junction).
+   * Prioriterer altid by-hubs så jobs kan pathfinde.
    * @param {string} [ignoreRoadId]
    */
   _resolveEndpoint(x, y, ignoreRoadId = null) {
     const R = this.snapR();
-    const placeNode = this._placeNodeNear(x, y);
+    // Generøs by-snap først (vigtigst for bil-ruter)
+    const placeNode = this._placeNodeNear(x, y, Math.max(R * 1.35, 56));
     if (placeNode) return placeNode;
+
     const near = this.graph.findNodeNear(x, y, R);
-    if (near) return near;
+    // Hvis tæt på by men fandt anden knude – brug by-hub alligevel
+    if (near?.placeId) return near;
+    const placeAnyway = this._placeNodeNear(x, y, R * 1.8);
+    if (placeAnyway) return placeAnyway;
 
     // Snap mid-road → split into junction
     let bestRoad = null;
@@ -705,6 +743,8 @@ export class Game {
       const junc = this._splitRoadAt(bestRoad, best.t);
       if (junc) return junc;
     }
+
+    if (near) return near;
     return this.graph.getOrCreateNode(x, y, null, R);
   }
 
@@ -753,21 +793,37 @@ export class Game {
     return junc;
   }
 
-  _placeNodeNear(x, y) {
+  /**
+   * @param {number} [maxDist] override radius (default place.r * 1.55)
+   */
+  _placeNodeNear(x, y, maxDist = null) {
+    let best = null;
+    let bestD = Infinity;
     for (const p of this.places) {
-      if (Math.hypot(p.x - x, p.y - y) < p.r * 1.4) {
-        return this.graph.nodes.get(p.nodeId);
+      const lim = maxDist != null ? maxDist : p.r * 1.55;
+      const d = Math.hypot(p.x - x, p.y - y);
+      if (d < lim && d < bestD) {
+        bestD = d;
+        best = p;
       }
+    }
+    if (best) {
+      const node = this.graph.nodes.get(best.nodeId);
+      if (node) return node;
+      // Genskab hub hvis mistet
+      const n = this.graph.addNode(best.x, best.y, best.id);
+      best.nodeId = n.id;
+      return n;
     }
     return null;
   }
 
   snapPoint(x, y) {
     const R = this.snapR();
-    // Places first
+    // Places first (generøs radius = nemmere by-forbindelser)
     for (const p of this.places) {
       const dist = Math.hypot(p.x - x, p.y - y);
-      const r = p.r * 1.5 * (snapRadiusMul(this.meta) > 1 ? 1.15 : 1);
+      const r = Math.max(p.r * 1.65, R * 1.2) * (snapRadiusMul(this.meta) > 1 ? 1.1 : 1);
       if (dist < r) {
         return {
           x: p.x,
@@ -1177,17 +1233,27 @@ export class Game {
       const dropPath = this.graph.findPath(fromNode.id, toNode.id);
       if (!dropPath) continue;
 
-      const candidate = free.find((v) => vehicleCanDoJob(v.classId, job));
-      if (!candidate) continue;
-
-      const home = candidate.homePlace || job.from;
-      const homeNode = this.graph.nodeForPlace(home.id) || fromNode;
-      let pickPath = this.graph.findPath(homeNode.id, fromNode.id);
-      if (!pickPath) {
-        // Already at from?
-        if (homeNode.id === fromNode.id) pickPath = { edges: [], length: 0 };
-        else continue;
+      // Find bil der kan jobbet OG har sti til pickup (fra position eller hjem)
+      let candidate = null;
+      let pickPath = null;
+      for (const v of free) {
+        if (!vehicleCanDoJob(v.classId, job)) continue;
+        const home = v.homePlace || job.from;
+        const homeNode = this.graph.nodeForPlace(home.id);
+        const near = nearestNode(this.graph, v.x, v.y);
+        const startId = near?.node?.id || homeNode?.id || fromNode.id;
+        let path = this.graph.findPath(startId, fromNode.id);
+        if (!path && homeNode) path = this.graph.findPath(homeNode.id, fromNode.id);
+        if (!path) {
+          if (startId === fromNode.id || homeNode?.id === fromNode.id) {
+            path = { edges: [], length: 0 };
+          } else continue;
+        }
+        candidate = v;
+        pickPath = path;
+        break;
       }
+      if (!candidate || !pickPath) continue;
 
       job.claimedBy = candidate.id;
       candidate.assignJob(job, pickPath, dropPath);

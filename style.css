@@ -150,7 +150,10 @@ html, body {
 
 #hud button,
 #hud .sheet,
-#hud .side-panel {
+#hud .side-panel,
+#hud .end-run,
+#hud .tutorial,
+#hud .minimap {
   pointer-events: auto;
 }
 
@@ -158,7 +161,8 @@ html, body {
   position: absolute;
   top: calc(8px + var(--safe-top));
   left: calc(8px + var(--safe-left));
-  right: calc(8px + var(--safe-right));
+  /* Lad plads til opgave-panel til højre – undgå overlap med ☰ */
+  right: calc(12px + var(--safe-right) + min(200px, 42vw));
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -245,18 +249,18 @@ html, body {
 
 .side-panel {
   position: absolute;
-  top: calc(58px + var(--safe-top));
+  top: calc(8px + var(--safe-top));
   right: calc(8px + var(--safe-right));
-  width: min(210px, 44vw);
-  max-height: 48vh;
+  width: min(200px, 42vw);
+  max-height: min(56vh, calc(100vh - 120px - var(--safe-bottom)));
   overflow: hidden;
-  background: rgba(255,255,255,0.92);
+  background: rgba(255,255,255,0.94);
   backdrop-filter: blur(10px);
   border-radius: 14px;
   padding: 0;
   font-size: 0.75rem;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-  z-index: 9;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.14);
+  z-index: 12; /* over top-hud, så menu ikke dækker opgaver */
   touch-action: pan-y;
 }
 
