@@ -668,7 +668,7 @@ export class Game {
         const upOk = canUpgrade(rank);
         const upP = upgradePrice(rank, v.classId);
         const sellP = sellPriceForClass(v.classId, rank);
-        const icon = cls.kind === 'truck' ? '🚚' : '🚗';
+        const icon = cls.icon || (cls.kind === 'truck' ? '🚚' : '🚗');
         const status = busy ? 'På job…' : 'Ledig';
         const rankLabel = rank > 0 ? ` · ★${rank}` : '';
         return `
