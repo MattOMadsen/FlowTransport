@@ -435,9 +435,32 @@ export class Game {
     }
   }
 
+  /** Clamp world point to playable board (inkl. lille margin 0). */
+  clampWorld(x, y) {
+    const maxX = this.worldW || 1;
+    const maxY = this.worldH || 1;
+    return {
+      x: Math.max(0, Math.min(maxX, x)),
+      y: Math.max(0, Math.min(maxY, y))
+    };
+  }
+
+  inWorld(x, y, pad = 0) {
+    const maxX = this.worldW || 0;
+    const maxY = this.worldH || 0;
+    return x >= -pad && y >= -pad && x <= maxX + pad && y <= maxY + pad;
+  }
+
   beginStroke(sx, sy) {
     if (this.tool !== 'draw' || this.paused) return;
-    const w = this.screenToWorld(sx, sy);
+    const raw = this.screenToWorld(sx, sy);
+    // Start uden for kort → ingen streg
+    if (!this.inWorld(raw.x, raw.y, 8)) {
+      playError();
+      this.toast('Tegn inde på kortet');
+      return;
+    }
+    const w = this.clampWorld(raw.x, raw.y);
     const snap = this.snapPoint(w.x, w.y);
     this.strokePoints = [{ x: snap.x, y: snap.y }];
     this.strokePreview = [...this.strokePoints];
@@ -446,7 +469,8 @@ export class Game {
 
   moveStroke(sx, sy) {
     if (!this.strokePoints.length) return;
-    const w = this.screenToWorld(sx, sy);
+    const raw = this.screenToWorld(sx, sy);
+    const w = this.clampWorld(raw.x, raw.y);
     const last = this.strokePoints[this.strokePoints.length - 1];
     // Altid opdatér snap-magnet (også mellem sample-punkter)
     const snap = this.snapPoint(w.x, w.y);
@@ -466,13 +490,24 @@ export class Game {
       this.strokeSnap = null;
       return;
     }
-    // Snap ends
-    const first = this.snapPoint(this.strokePoints[0].x, this.strokePoints[0].y);
-    const lastRaw = this.strokePoints[this.strokePoints.length - 1];
-    const last = this.snapPoint(lastRaw.x, lastRaw.y);
-    const points = [{ x: first.x, y: first.y }, ...this.strokePoints.slice(1, -1), { x: last.x, y: last.y }];
+    // Clamp + snap ends – aldrig uden for map
+    const mid = this.strokePoints.slice(1, -1).map((p) => this.clampWorld(p.x, p.y));
+    const firstC = this.clampWorld(this.strokePoints[0].x, this.strokePoints[0].y);
+    const lastC = this.clampWorld(
+      this.strokePoints[this.strokePoints.length - 1].x,
+      this.strokePoints[this.strokePoints.length - 1].y
+    );
+    const first = this.snapPoint(firstC.x, firstC.y);
+    const last = this.snapPoint(lastC.x, lastC.y);
+    const firstPt = this.clampWorld(first.x, first.y);
+    const lastPt = this.clampWorld(last.x, last.y);
+    const points = [
+      { x: firstPt.x, y: firstPt.y },
+      ...mid,
+      { x: lastPt.x, y: lastPt.y }
+    ];
     // Simplify very dense points
-    const simplified = simplify(points, 8);
+    const simplified = simplify(points, 8).map((p) => this.clampWorld(p.x, p.y));
     const len = polyLength(simplified);
     if (len < 40) {
       this.toast('Vejen er for kort');
@@ -611,6 +646,8 @@ export class Game {
   }
 
   _registerRoad(road) {
+    // Hold alle punkter inde på brættet
+    road.points = (road.points || []).map((p) => this.clampWorld(p.x, p.y));
     const a = road.points[0];
     const b = road.points[road.points.length - 1];
     const nodeA = this._resolveEndpoint(a.x, a.y, road.id);
@@ -618,6 +655,10 @@ export class Game {
     if (!nodeA || !nodeB || nodeA.id === nodeB.id) return;
     road.points[0] = { x: nodeA.x, y: nodeA.y };
     road.points[road.points.length - 1] = { x: nodeB.x, y: nodeB.y };
+    // Clamp igen hvis nodes alligevel er ude (må ikke ske for place hubs)
+    for (let i = 0; i < road.points.length; i++) {
+      road.points[i] = this.clampWorld(road.points[i].x, road.points[i].y);
+    }
     const len = polyLength(road.points);
     this.graph.addEdge(nodeA.id, nodeB.id, road.id, len, 0);
   }
@@ -762,7 +803,8 @@ export class Game {
         strength: 1 - dist / R
       };
     }
-    return { x, y, kind: 'free', label: null, dist: 0, strength: 0 };
+    const c = this.clampWorld(x, y);
+    return { x: c.x, y: c.y, kind: 'free', label: null, dist: 0, strength: 0 };
   }
 
   undo() {
