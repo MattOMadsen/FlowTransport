@@ -1,4 +1,4 @@
-import { LAYOUT_INTRO, LAYOUT_COAST, LAYOUT_VALLEY } from './places.js';
+import { LAYOUT_INTRO, LAYOUT_COAST, LAYOUT_VALLEY, LAYOUT_ISLANDS } from './places.js';
 
 /**
  * @typedef {{ type: 'deliver'|'connect_all'|'money', amount?: number, stars: number }} Goal
@@ -52,11 +52,34 @@ export const SCENARIOS = [
       { type: 'money', amount: 3200, stars: 2 },
       { type: 'deliver', amount: 50, stars: 3 }
     ]
+  },
+  {
+    id: 'islands',
+    name: 'Ø-broerne',
+    blurb: 'To kyster og en hovedby midt i – byg broer og forbinde nettet.',
+    seed: 404,
+    startMoney: 3000,
+    worldW: 2400,
+    worldH: 1800,
+    unlockLevel: 1,
+    layout: LAYOUT_ISLANDS,
+    goals: [
+      { type: 'deliver', amount: 16, stars: 1 },
+      { type: 'connect_all', stars: 2 },
+      { type: 'deliver', amount: 40, stars: 3 }
+    ]
   }
 ];
 
 export function getScenario(id) {
   return SCENARIOS.find((s) => s.id === id) || SCENARIOS[0];
+}
+
+/** Næste bane i listen (wrap). */
+export function nextScenarioId(currentId) {
+  const i = SCENARIOS.findIndex((s) => s.id === currentId);
+  if (i < 0) return SCENARIOS[0].id;
+  return SCENARIOS[(i + 1) % SCENARIOS.length].id;
 }
 
 export function goalLabel(g) {

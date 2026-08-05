@@ -47,6 +47,22 @@ export const LAYOUT_INTRO = [
   { rx: 0.52, ry: 0.86, rr: 0.025, type: 'farm' }
 ];
 
+/** Ø-broer – to klynger med vand imellem (gods + person) */
+export const LAYOUT_ISLANDS = [
+  { rx: 0.22, ry: 0.35, rr: 0.028, type: 'harbor' },
+  { rx: 0.18, ry: 0.18, rr: 0.024, type: 'town' },
+  { rx: 0.32, ry: 0.22, rr: 0.023, type: 'farm' },
+  { rx: 0.28, ry: 0.48, rr: 0.024, type: 'factory' },
+  { rx: 0.14, ry: 0.55, rr: 0.023, type: 'town' },
+  { rx: 0.50, ry: 0.45, rr: 0.026, type: 'capital' },
+  { rx: 0.72, ry: 0.30, rr: 0.028, type: 'harbor' },
+  { rx: 0.82, ry: 0.18, rr: 0.024, type: 'town' },
+  { rx: 0.88, ry: 0.38, rr: 0.024, type: 'factory' },
+  { rx: 0.78, ry: 0.55, rr: 0.023, type: 'farm' },
+  { rx: 0.68, ry: 0.68, rr: 0.024, type: 'town' },
+  { rx: 0.40, ry: 0.72, rr: 0.023, type: 'farm' }
+];
+
 /** Dal – tæt net, blandet gods/personer */
 export const LAYOUT_VALLEY = [
   { rx: 0.50, ry: 0.48, rr: 0.030, type: 'capital' },

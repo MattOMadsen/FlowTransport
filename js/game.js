@@ -22,8 +22,15 @@ import {
   canUpgrade,
   sellPriceForClass
 } from './fleet.js';
-import { getScenario, evaluateStars, goalLabel } from './scenarios.js';
+import { getScenario, evaluateStars, goalLabel, nextScenarioId, SCENARIOS } from './scenarios.js';
 import { loadMeta, saveMeta, addXp, setScenarioStars, XP_REWARDS } from './meta.js';
+import {
+  loadDaily,
+  bumpDaily,
+  claimDaily,
+  dailyUi,
+  isDailyComplete
+} from './daily.js';
 import {
   SHOP_BUFFS,
   BUILDINGS,
@@ -86,6 +93,8 @@ export class Game {
     this._last = 0;
     this._loopGen = 0;
     this._saveAcc = 0;
+    this.daily = loadDaily();
+    this._endRunShown = false;
 
     this.input = new InputHandler(canvas, {
       getTool: () => this.tool,
@@ -175,6 +184,9 @@ export class Game {
     this.paused = false;
     this.tool = 'draw';
     this.meta = loadMeta();
+    this.daily = loadDaily();
+    this._endRunShown = false;
+    this.hideEndRun();
 
     this.places = buildPlaces(
       this.worldW,
@@ -544,6 +556,8 @@ export class Game {
     playRoad();
     this.unlockAch('first_road');
     if (this.allPlacesConnected()) this.unlockAch('connect_all');
+    bumpDaily(this.daily, 'roads', 1);
+    this.refreshDailyUi();
 
     const connected = this._snapIsConnected(first) && this._snapIsConnected(last);
     if (!connected) {
@@ -626,6 +640,8 @@ export class Game {
     playRoad();
     this.unlockAch('dual_lane');
     this.toast(`2-spor opgraderet (−${cost} kr) 🛣️`);
+    bumpDaily(this.daily, 'roads', 1);
+    this.refreshDailyUi();
     this.persistSession();
     this.syncUI();
   }
@@ -1081,6 +1097,8 @@ export class Game {
     playBuy();
     this.toast(`${VEHICLE_CLASSES[classId].label} købt (−${price} kr)`);
     if (this.vehicles.length >= 3) this.unlockAch('fleet_3');
+    bumpDaily(this.daily, 'buy', 1);
+    this.refreshDailyUi();
     this.renderShopFleet();
     this.tryAssignJobs();
     this.persistSession();
@@ -1111,6 +1129,8 @@ export class Game {
     playBuy();
     this.unlockAch('upgrade_car');
     this.toast(`Opgraderet til ★${v.upgradeRank} (cap ${v.capacity})`);
+    bumpDaily(this.daily, 'upgrade', 1);
+    this.refreshDailyUi();
     this.renderShopFleet();
     this.persistSession();
     this.syncUI();
@@ -1253,6 +1273,8 @@ export class Game {
         saveMeta(this.meta);
         playDeliver();
         this.unlockAch('first_delivery');
+        bumpDaily(this.daily, 'deliver', amount);
+        this.refreshDailyUi();
       },
       onJobDone: (v, job) => {
         if (job) {
@@ -1262,6 +1284,8 @@ export class Game {
           playJobDone();
           this.toast(`Leveret: ${job.from.name} → ${job.to.name} ✓`);
           if (job.type === 'express') this.unlockAch('express');
+          bumpDaily(this.daily, 'jobs', 1);
+          this.refreshDailyUi();
           if (this.selectedJobId === job.id) {
             this.selectedJobId = null;
             this.selectedJobTimer = 0;
@@ -1323,6 +1347,85 @@ export class Game {
       this.toast(`${'⭐'.repeat(stars)} Nye stjerner!`);
       if (stars >= 1) this.unlockAch('star_1');
     }
+    // 3 stjerner → end-of-run (én gang pr. session)
+    if (stars >= 3 && !this._endRunShown) {
+      this._endRunShown = true;
+      this.showEndRun(stars);
+    }
+  }
+
+  showEndRun(stars) {
+    const panel = document.getElementById('end-run');
+    if (!panel) return;
+    const title = document.getElementById('end-run-title');
+    const body = document.getElementById('end-run-body');
+    const nextId = nextScenarioId(this.scenario?.id);
+    const next = SCENARIOS.find((s) => s.id === nextId);
+    if (title) title.textContent = `${'⭐'.repeat(stars)} Bane klaret!`;
+    if (body) {
+      body.innerHTML = `
+        <p><strong>${this.scenario?.name || 'Bane'}</strong></p>
+        <p>Leveret: <strong>${this.stats.delivered}</strong> · Jobs: <strong>${this.stats.jobsDone}</strong></p>
+        <p>Saldo: <strong>${this.money} kr</strong> · Level ${this.meta.level}</p>
+        ${next ? `<p class="muted">Næste: ${next.name}</p>` : ''}`;
+    }
+    panel.dataset.nextId = nextId || '';
+    panel.classList.remove('hidden');
+    this.paused = true;
+  }
+
+  hideEndRun() {
+    document.getElementById('end-run')?.classList.add('hidden');
+  }
+
+  continueAfterEndRun() {
+    this.hideEndRun();
+    this.paused = false;
+    this.toast('Fortsæt med at spille');
+    this.syncUI();
+  }
+
+  startNextScenarioFromEnd() {
+    const panel = document.getElementById('end-run');
+    const nextId = panel?.dataset?.nextId || nextScenarioId(this.scenario?.id);
+    this.hideEndRun();
+    this.startScenario(nextId);
+  }
+
+  refreshDailyUi() {
+    const strip = document.getElementById('daily-strip');
+    if (!strip) return;
+    this.daily = this.daily || loadDaily();
+    const ui = dailyUi(this.daily);
+    const label = document.getElementById('daily-label');
+    const prog = document.getElementById('daily-prog');
+    const claim = document.getElementById('daily-claim');
+    if (label) label.textContent = `${ui.icon} ${ui.label}`;
+    if (prog) prog.textContent = ui.claimed ? 'Hentet ✓' : ui.progress;
+    if (claim) {
+      claim.classList.toggle('hidden', !ui.ready);
+      claim.disabled = !ui.ready;
+    }
+    strip.classList.toggle('ready', ui.ready);
+    strip.classList.toggle('claimed', ui.claimed);
+  }
+
+  claimDailyReward() {
+    this.daily = loadDaily();
+    const res = claimDaily(this.daily);
+    if (!res.ok) {
+      if (res.reason === 'claimed') this.toast('Allerede hentet i dag');
+      else if (res.reason === 'incomplete') this.toast('Målet er ikke nået endnu');
+      else this.toast('Ingen belønning');
+      this.refreshDailyUi();
+      return;
+    }
+    addXp(this.meta, res.xp || 0);
+    this.money += res.money || 0;
+    this.toast(`Daglig belønning: +${res.xp} XP · +${res.money} kr (streak ${res.streak})`);
+    this.refreshDailyUi();
+    this.persistSession();
+    this.syncUI();
   }
 
   syncUI() {
@@ -1366,6 +1469,7 @@ export class Game {
     if (muteBtn) muteBtn.textContent = isMuted() ? '🔇' : '🔊';
     const pauseBtn = document.getElementById('btn-pause');
     if (pauseBtn) pauseBtn.textContent = this.paused ? '▶️' : '⏸️';
+    this.refreshDailyUi();
   }
 }
 

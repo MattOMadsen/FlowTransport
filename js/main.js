@@ -174,6 +174,16 @@ document.getElementById('btn-menu')?.addEventListener('click', () => openMenu())
 document.getElementById('btn-continue')?.addEventListener('click', () => continueGame());
 document.getElementById('btn-pause')?.addEventListener('click', () => game.togglePause());
 document.getElementById('btn-mute')?.addEventListener('click', () => game.toggleMute());
+document.getElementById('daily-claim')?.addEventListener('click', () => game.claimDailyReward());
+document.getElementById('end-run-continue')?.addEventListener('click', () => game.continueAfterEndRun());
+document.getElementById('end-run-next')?.addEventListener('click', () => {
+  game.startNextScenarioFromEnd();
+  maybeStartTutorial();
+});
+document.getElementById('end-run-menu')?.addEventListener('click', () => {
+  game.hideEndRun();
+  openMenu();
+});
 
 document.querySelectorAll('[data-tool]').forEach((btn) => {
   btn.addEventListener('click', () => game.setTool(btn.dataset.tool));
