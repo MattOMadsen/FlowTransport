@@ -35,6 +35,12 @@ const ROAD_COST_PER_PX = 0.42;
 const ROAD_BASE_COST = 18;
 const BRIDGE_MULT = 1.85;
 const SNAP_R = 40;
+/** 1 = normal · 2 = 2-spor (hurtigere) */
+const MAX_ROAD_LANES = 2;
+const ROAD_UPGRADE_BASE = 40;
+const ROAD_UPGRADE_PER_PX = 0.22;
+/** Multiplikator på bil-fart på 2-spor */
+export const LANE_SPEED_MUL = 1.28;
 
 export class Game {
   constructor(canvas, ui) {
@@ -361,10 +367,10 @@ export class Game {
     return snap && snap.kind && snap.kind !== 'free';
   }
 
-  /** Remove nearest road under world point (erase tool). */
-  eraseAt(wx, wy) {
+  /** Closest road under world point within maxDist */
+  findRoadNear(wx, wy, maxDist = 36) {
     let best = null;
-    let bestD = 36;
+    let bestD = maxDist;
     for (const road of this.roads) {
       const c = closestOnPoly(road.points, wx, wy);
       if (c.dist < bestD) {
@@ -372,12 +378,52 @@ export class Game {
         best = road;
       }
     }
+    return best;
+  }
+
+  /** Remove nearest road under world point (erase tool). */
+  eraseAt(wx, wy) {
+    const best = this.findRoadNear(wx, wy, 36);
     if (!best) {
       playError();
       this.toast('Ingen vej tæt på');
       return;
     }
     this.removeRoad(best.id, true);
+  }
+
+  /** Cost to upgrade road to 2-spor */
+  upgradeRoadCost(road) {
+    if (!road) return 0;
+    const len = polyLength(road.points) || 0;
+    return Math.max(45, Math.round(ROAD_UPGRADE_BASE + len * ROAD_UPGRADE_PER_PX));
+  }
+
+  /** Upgrade tool: tap road → 2-spor (hurtigere + bredere). */
+  upgradeAt(wx, wy) {
+    const road = this.findRoadNear(wx, wy, 40);
+    if (!road) {
+      playError();
+      this.toast('Tryk på en vej for 2-spor');
+      return;
+    }
+    const lanes = road.lanes || 1;
+    if (lanes >= MAX_ROAD_LANES) {
+      this.toast('Allerede 2-spor');
+      return;
+    }
+    const cost = this.upgradeRoadCost(road);
+    if (this.money < cost) {
+      playError();
+      this.toast(`Ikke nok penge (mangler ${cost - this.money} kr)`);
+      return;
+    }
+    this.money -= cost;
+    road.lanes = MAX_ROAD_LANES;
+    road.paidCost = (road.paidCost || 0) + cost;
+    playRoad();
+    this.toast(`2-spor opgraderet (−${cost} kr) 🛣️`);
+    this.syncUI();
   }
 
   removeRoad(roadId, fromErase = false) {
@@ -462,7 +508,8 @@ export class Game {
       id: `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
       points: split.after,
       lanes: road.lanes || 1,
-      paidCost: 0
+      paidCost: 0,
+      isBridge: !!road.isBridge
     };
     const endB = roadB.points[roadB.points.length - 1];
     const nodeB =
@@ -620,6 +667,10 @@ export class Game {
     const w = this.screenToWorld(sx, sy);
     if (this.tool === 'erase') {
       this.eraseAt(w.x, w.y);
+      return;
+    }
+    if (this.tool === 'upgrade') {
+      this.upgradeAt(w.x, w.y);
       return;
     }
     for (const p of this.places) {

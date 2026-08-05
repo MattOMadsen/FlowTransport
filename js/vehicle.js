@@ -150,7 +150,9 @@ export class Vehicle {
 
     const pts = step.reverse ? [...road.points].reverse() : road.points;
     const len = edge.length || 1;
-    this.t += (this.speed * dt) / len;
+    // 2-spor (lanes ≥ 2) → højere fart
+    const laneMul = (road.lanes || 1) >= 2 ? 1.28 : 1;
+    this.t += (this.speed * laneMul * dt) / len;
 
     if (this.t >= 0.99) {
       const pos = pointOnPoly(pts, 1);

@@ -167,7 +167,9 @@ export class Renderer {
     if (!points || points.length < 2) return;
     const ctx = this.ctx;
     const isoPts = points.map((p) => worldToIso(p.x, p.y));
-    const width = opts.width || 14;
+    const lanes = opts.lanes || 1;
+    const dual = lanes >= 2;
+    const width = opts.width || (dual ? 18 : 14);
 
     ctx.beginPath();
     ctx.moveTo(isoPts[0].x + 2, isoPts[0].y + 3);
@@ -181,7 +183,7 @@ export class Renderer {
     ctx.beginPath();
     ctx.moveTo(isoPts[0].x, isoPts[0].y);
     for (let i = 1; i < isoPts.length; i++) ctx.lineTo(isoPts[i].x, isoPts[i].y);
-    ctx.strokeStyle = '#6b7280';
+    ctx.strokeStyle = dual ? '#57534e' : '#6b7280';
     ctx.lineWidth = width + 5;
     ctx.stroke();
 
@@ -190,7 +192,9 @@ export class Renderer {
       ? 'rgba(55,65,81,0.55)'
       : bridge
         ? '#64748b'
-        : '#4b5563';
+        : dual
+          ? '#374151'
+          : '#4b5563';
     ctx.lineWidth = width;
     ctx.stroke();
 
@@ -203,10 +207,22 @@ export class Renderer {
 
     if (!opts.preview) {
       ctx.save();
-      ctx.setLineDash(bridge ? [4, 8] : [8, 10]);
-      ctx.strokeStyle = bridge ? 'rgba(148,163,184,0.9)' : 'rgba(251,191,36,0.75)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
+      if (dual) {
+        // Dobbelt midterstribe = 2-spor
+        ctx.setLineDash([]);
+        ctx.strokeStyle = 'rgba(253, 224, 71, 0.95)';
+        ctx.lineWidth = 2.2;
+        ctx.stroke();
+        ctx.setLineDash([6, 8]);
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      } else {
+        ctx.setLineDash(bridge ? [4, 8] : [8, 10]);
+        ctx.strokeStyle = bridge ? 'rgba(148,163,184,0.9)' : 'rgba(251,191,36,0.75)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
       ctx.restore();
     }
   }
@@ -372,8 +388,10 @@ export class Renderer {
     this.drawWorldGround(game.worldW, game.worldH, game.scenery);
 
     for (const road of game.roads) {
+      const lanes = road.lanes || 1;
       this.drawRoad(road.points, {
-        width: 12 + (road.lanes || 1) * 2,
+        width: 12 + lanes * 3,
+        lanes,
         bridge: !!road.isBridge
       });
     }
