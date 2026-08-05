@@ -562,6 +562,20 @@ html, body {
   grid-template-columns: 1fr 1fr;
 }
 
+.shop-grid-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.4rem;
+}
+
+.shop-grid-3 .shop-item {
+  padding: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.global-item:disabled strong {
+  color: var(--muted);
+}
+
 .shop-item {
   border: 2px solid #e7e5e4;
   background: #fff;

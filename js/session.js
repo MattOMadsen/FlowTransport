@@ -68,6 +68,13 @@ export function serializeSession(game) {
     y: v.y
   }));
 
+  const buildings = (game.places || []).map((p) => ({
+    id: p.id,
+    station: !!p.buildings?.station,
+    warehouse: !!p.buildings?.warehouse,
+    depot: !!p.buildings?.depot
+  }));
+
   return {
     version: VERSION,
     savedAt: Date.now(),
@@ -85,6 +92,7 @@ export function serializeSession(game) {
     roads,
     jobs,
     fleet,
+    buildings,
     nextJobId: Math.max(
       1,
       ...(game.jobs || []).map((j) => (j.id | 0) + 1),

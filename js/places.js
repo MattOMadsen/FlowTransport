@@ -126,6 +126,7 @@ export function buildPlaces(worldW, worldH, layout, seed = 101) {
       r,
       color: meta.color,
       icon: meta.icon,
+      buildings: { station: false, warehouse: false, depot: false },
       passengers: meta.passengers,
       cargo: meta.cargo,
       variant: type === 'town' ? townVariant++ : 0,

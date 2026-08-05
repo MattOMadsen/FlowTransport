@@ -24,6 +24,14 @@ import {
 } from './fleet.js';
 import { getScenario, evaluateStars, goalLabel } from './scenarios.js';
 import { loadMeta, saveMeta, addXp, setScenarioStars, XP_REWARDS } from './meta.js';
+import {
+  SHOP_BUFFS,
+  BUILDINGS,
+  hasShopBuff,
+  roadCostMul,
+  snapRadiusMul
+} from './shop.js';
+import { tryUnlock } from './achievements.js';
 import { Camera } from './camera.js';
 import { InputHandler } from './input.js';
 import { Renderer } from './render.js';
@@ -190,6 +198,7 @@ export class Game {
       this.seedJobs(4);
     }
 
+
     this.renderer.resize();
     if (saved?.camera) {
       this.camera.x = saved.camera.x ?? this.camera.x;
@@ -214,6 +223,20 @@ export class Game {
       delivered: saved.stats?.delivered | 0,
       jobsDone: saved.stats?.jobsDone | 0
     };
+
+    // Buildings on places
+    if (Array.isArray(saved.buildings)) {
+      const byId = new Map(this.places.map((p) => [p.id, p]));
+      for (const b of saved.buildings) {
+        const p = byId.get(b.id);
+        if (!p) continue;
+        p.buildings = {
+          station: !!b.station,
+          warehouse: !!b.warehouse,
+          depot: !!b.depot
+        };
+      }
+    }
 
     for (const r of saved.roads || []) {
       if (!r.points || r.points.length < 2) continue;
@@ -371,10 +394,30 @@ export class Game {
     );
   }
 
+  jobSpawnOpts() {
+    return {
+      expressBias: hasShopBuff(this.meta, 'express_office') ? 0.12 : 0,
+      cargoBias: hasShopBuff(this.meta, 'cargo_hub') ? 0.1 : 0
+    };
+  }
+
   seedJobs(n) {
+    const opts = this.jobSpawnOpts();
     for (let i = 0; i < n; i++) {
-      const j = generateJob(this.places);
+      const j = generateJob(this.places, opts);
       if (j) this.jobs.push(j);
+    }
+  }
+
+  snapR() {
+    return SNAP_R * snapRadiusMul(this.meta);
+  }
+
+  unlockAch(id) {
+    const def = tryUnlock(this.meta, id, addXp);
+    if (def) {
+      saveMeta(this.meta);
+      this.toast(`🏆 ${def.label} (+${def.xp} XP)`);
     }
   }
 
@@ -441,6 +484,7 @@ export class Game {
     const overWater = strokeCrossesWater(simplified, this.scenery?.lakes);
     let cost = Math.round(ROAD_BASE_COST + len * ROAD_COST_PER_PX);
     if (overWater) cost = Math.round(cost * BRIDGE_MULT);
+    cost = Math.max(1, Math.round(cost * roadCostMul(this.meta)));
     if (this.money < cost) {
       playError();
       this.toast(`Ikke nok penge (mangler ${cost - this.money} kr)`);
@@ -463,6 +507,8 @@ export class Game {
     this.undoStack.push({ type: 'road', roadId: road.id, cost });
     addXp(this.meta, XP_REWARDS.road);
     playRoad();
+    this.unlockAch('first_road');
+    if (this.allPlacesConnected()) this.unlockAch('connect_all');
 
     const connected = this._snapIsConnected(first) && this._snapIsConnected(last);
     if (!connected) {
@@ -479,6 +525,7 @@ export class Game {
     this.strokePreview = [];
     this.strokeSnap = null;
     this.tryAssignJobs();
+    this.persistSession();
     this.syncUI();
   }
 
@@ -542,7 +589,9 @@ export class Game {
     road.lanes = MAX_ROAD_LANES;
     road.paidCost = (road.paidCost || 0) + cost;
     playRoad();
+    this.unlockAch('dual_lane');
     this.toast(`2-spor opgraderet (−${cost} kr) 🛣️`);
+    this.persistSession();
     this.syncUI();
   }
 
@@ -578,9 +627,10 @@ export class Game {
    * @param {string} [ignoreRoadId]
    */
   _resolveEndpoint(x, y, ignoreRoadId = null) {
+    const R = this.snapR();
     const placeNode = this._placeNodeNear(x, y);
     if (placeNode) return placeNode;
-    const near = this.graph.findNodeNear(x, y, SNAP_R);
+    const near = this.graph.findNodeNear(x, y, R);
     if (near) return near;
 
     // Snap mid-road → split into junction
@@ -589,7 +639,7 @@ export class Game {
     for (const road of this.roads) {
       if (road.id === ignoreRoadId) continue;
       const c = closestOnPoly(road.points, x, y);
-      if (c.dist < SNAP_R && (!best || c.dist < best.dist)) {
+      if (c.dist < R && (!best || c.dist < best.dist)) {
         best = c;
         bestRoad = road;
       }
@@ -598,7 +648,7 @@ export class Game {
       const junc = this._splitRoadAt(bestRoad, best.t);
       if (junc) return junc;
     }
-    return this.graph.getOrCreateNode(x, y, null, SNAP_R);
+    return this.graph.getOrCreateNode(x, y, null, R);
   }
 
   /** Split road geometry + graph into two segments at t */
@@ -656,10 +706,11 @@ export class Game {
   }
 
   snapPoint(x, y) {
+    const R = this.snapR();
     // Places first
     for (const p of this.places) {
       const dist = Math.hypot(p.x - x, p.y - y);
-      const r = p.r * 1.5;
+      const r = p.r * 1.5 * (snapRadiusMul(this.meta) > 1 ? 1.15 : 1);
       if (dist < r) {
         return {
           x: p.x,
@@ -675,19 +726,19 @@ export class Game {
     let best = null;
     for (const road of this.roads) {
       const c = closestOnPoly(road.points, x, y);
-      if (c.dist < SNAP_R && (!best || c.dist < best.dist)) {
+      if (c.dist < R && (!best || c.dist < best.dist)) {
         best = {
           x: c.x,
           y: c.y,
           kind: 'road',
           label: 'Vej',
           dist: c.dist,
-          strength: 1 - c.dist / SNAP_R
+          strength: 1 - c.dist / R
         };
       }
     }
     if (best) return best;
-    const n = this.graph.findNodeNear(x, y, SNAP_R);
+    const n = this.graph.findNodeNear(x, y, R);
     if (n) {
       const dist = Math.hypot(n.x - x, n.y - y);
       // Node med sted-id tæller som by
@@ -699,7 +750,7 @@ export class Game {
           kind: 'place',
           label: place?.name || 'By',
           dist,
-          strength: 1 - dist / SNAP_R
+          strength: 1 - dist / R
         };
       }
       return {
@@ -708,7 +759,7 @@ export class Game {
         kind: 'node',
         label: 'Kryds',
         dist,
-        strength: 1 - dist / SNAP_R
+        strength: 1 - dist / R
       };
     }
     return { x, y, kind: 'free', label: null, dist: 0, strength: 0 };
@@ -808,12 +859,118 @@ export class Game {
     panel.querySelector('.shop-title').textContent = place.name;
     panel.classList.add('open');
     this._shopPlace = place;
+    this.closeGlobalShop();
     this.renderShopFleet();
+    this.renderCityBuildings();
   }
 
   closeShop() {
     this.ui.shop?.classList.remove('open');
     this._shopPlace = null;
+  }
+
+  openGlobalShop() {
+    this.closeShop();
+    const panel = this.ui.globalShop || document.getElementById('global-shop');
+    if (!panel) return;
+    panel.classList.add('open');
+    this.renderGlobalShop();
+  }
+
+  closeGlobalShop() {
+    (this.ui.globalShop || document.getElementById('global-shop'))?.classList.remove('open');
+  }
+
+  renderGlobalShop() {
+    const list = document.getElementById('global-shop-list');
+    if (!list) return;
+    const level = this.meta?.level || 1;
+    list.innerHTML = SHOP_BUFFS.map((item) => {
+      const owned = hasShopBuff(this.meta, item.id);
+      const locked = level < item.unlockLevel;
+      const disabled = owned || locked || this.money < item.price;
+      return `
+        <button type="button" class="shop-item global-item" data-buff="${item.id}"
+          ${disabled && !owned ? 'disabled' : ''} ${owned ? 'disabled' : ''}>
+          <span>${item.icon} ${item.label}</span>
+          <strong>${owned ? 'Ejet' : locked ? `Lvl ${item.unlockLevel}` : `${item.price} kr`}</strong>
+          <small>${item.desc}</small>
+        </button>`;
+    }).join('');
+  }
+
+  buyBuff(buffId) {
+    const item = SHOP_BUFFS.find((b) => b.id === buffId);
+    if (!item) return;
+    if (hasShopBuff(this.meta, buffId)) {
+      this.toast('Allerede købt');
+      return;
+    }
+    if ((this.meta.level || 1) < item.unlockLevel) {
+      this.toast(`Kræver level ${item.unlockLevel}`);
+      playError();
+      return;
+    }
+    if (this.money < item.price) {
+      this.toast('Ikke nok penge');
+      playError();
+      return;
+    }
+    this.money -= item.price;
+    if (!this.meta.shopOwned) this.meta.shopOwned = {};
+    this.meta.shopOwned[buffId] = true;
+    saveMeta(this.meta);
+    playBuy();
+    this.toast(`${item.icon} ${item.label} købt`);
+    this.renderGlobalShop();
+    this.persistSession();
+    this.syncUI();
+  }
+
+  renderCityBuildings() {
+    const el = document.getElementById('shop-buildings');
+    if (!el || !this._shopPlace) return;
+    const place = this._shopPlace;
+    if (!place.buildings) {
+      place.buildings = { station: false, warehouse: false, depot: false };
+    }
+    el.innerHTML = Object.values(BUILDINGS)
+      .map((b) => {
+        const owned = !!place.buildings[b.id];
+        return `
+          <button type="button" class="shop-item" data-build="${b.id}"
+            ${owned || this.money < b.price ? 'disabled' : ''}>
+            <span>${b.icon} ${b.label}</span>
+            <strong>${owned ? 'Bygget' : `${b.price} kr`}</strong>
+            <small>${b.desc}</small>
+          </button>`;
+      })
+      .join('');
+  }
+
+  buyBuilding(buildingId) {
+    const place = this._shopPlace;
+    const def = BUILDINGS[buildingId];
+    if (!place || !def) return;
+    if (!place.buildings) {
+      place.buildings = { station: false, warehouse: false, depot: false };
+    }
+    if (place.buildings[buildingId]) {
+      this.toast('Allerede bygget her');
+      return;
+    }
+    if (this.money < def.price) {
+      this.toast('Ikke nok penge');
+      playError();
+      return;
+    }
+    this.money -= def.price;
+    place.buildings[buildingId] = true;
+    playBuy();
+    this.toast(`${def.icon} ${def.label} i ${place.name}`);
+    this.renderCityBuildings();
+    this.persistSession();
+    this.syncUI();
   }
 
   /** Vehicles stationed at the open shop city (homePlace). */
@@ -881,8 +1038,10 @@ export class Game {
     );
     playBuy();
     this.toast(`${VEHICLE_CLASSES[classId].label} købt (−${price} kr)`);
+    if (this.vehicles.length >= 3) this.unlockAch('fleet_3');
     this.renderShopFleet();
     this.tryAssignJobs();
+    this.persistSession();
     this.syncUI();
   }
 
@@ -908,8 +1067,10 @@ export class Game {
     v.upgradeRank += 1;
     v.applyStats();
     playBuy();
+    this.unlockAch('upgrade_car');
     this.toast(`Opgraderet til ★${v.upgradeRank} (cap ${v.capacity})`);
     this.renderShopFleet();
+    this.persistSession();
     this.syncUI();
   }
 
@@ -930,13 +1091,22 @@ export class Game {
     this.money += refund;
     this.vehicles = this.vehicles.filter((x) => x.id !== vehicleId);
     playBuy();
+    this.unlockAch('sell_car');
     this.toast(`Solgt (+${refund} kr)`);
     this.renderShopFleet();
+    this.persistSession();
     this.syncUI();
   }
 
   tryAssignJobs() {
-    const free = this.vehicles.filter((v) => v.idle);
+    // Depot-hjem → prioritet i køen
+    const free = this.vehicles
+      .filter((v) => v.idle)
+      .sort((a, b) => {
+        const da = a.homePlace?.buildings?.depot ? 0 : 1;
+        const db = b.homePlace?.buildings?.depot ? 0 : 1;
+        return da - db;
+      });
     for (const job of this.jobs) {
       if (!job.active || job.claimedBy) continue;
       const fromNode = this.graph.nodeForPlace(job.from.id);
@@ -1018,7 +1188,7 @@ export class Game {
     this.jobTimer += dt;
     if (this.jobTimer > 7 && this.jobs.filter((j) => j.active).length < 6) {
       this.jobTimer = 0;
-      const j = generateJob(this.places);
+      const j = generateJob(this.places, this.jobSpawnOpts());
       if (j) {
         this.jobs.push(j);
         this.tryAssignJobs();
@@ -1040,6 +1210,7 @@ export class Game {
         this.meta.totalDelivered = (this.meta.totalDelivered || 0) + amount;
         saveMeta(this.meta);
         playDeliver();
+        this.unlockAch('first_delivery');
       },
       onJobDone: (v, job) => {
         if (job) {
@@ -1048,6 +1219,7 @@ export class Game {
           this.stats.jobsDone += 1;
           playJobDone();
           this.toast(`Leveret: ${job.from.name} → ${job.to.name} ✓`);
+          if (job.type === 'express') this.unlockAch('express');
           if (this.selectedJobId === job.id) {
             this.selectedJobId = null;
             this.selectedJobTimer = 0;
@@ -1055,6 +1227,7 @@ export class Game {
         }
         this.tryAssignJobs();
         this.checkStars();
+        this.persistSession();
         this.syncUI();
       }
     };
@@ -1106,6 +1279,7 @@ export class Game {
       setScenarioStars(this.meta, this.scenario.id, stars);
       addXp(this.meta, XP_REWARDS.star * (stars - prev));
       this.toast(`${'⭐'.repeat(stars)} Nye stjerner!`);
+      if (stars >= 1) this.unlockAch('star_1');
     }
   }
 

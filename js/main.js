@@ -16,7 +16,8 @@ const ui = {
   jobs: document.getElementById('job-list'),
   goals: document.getElementById('goal-list'),
   toast: document.getElementById('toast'),
-  shop: document.getElementById('shop')
+  shop: document.getElementById('shop'),
+  globalShop: document.getElementById('global-shop')
 };
 
 const game = new Game(canvas, ui);
@@ -179,10 +180,12 @@ document.querySelectorAll('[data-tool]').forEach((btn) => {
 });
 
 document.getElementById('shop-close')?.addEventListener('click', () => game.closeShop());
+document.getElementById('global-shop-close')?.addEventListener('click', () => game.closeGlobalShop());
+document.getElementById('btn-global-shop')?.addEventListener('click', () => game.openGlobalShop());
 document.querySelectorAll('[data-buy]').forEach((btn) => {
   btn.addEventListener('click', () => game.buyVehicle(btn.dataset.buy));
 });
-// Upgrade / sell (dynamiske knapper i flåde-listen)
+// Upgrade / sell / bygninger (dynamiske knapper)
 document.getElementById('shop')?.addEventListener('click', (e) => {
   const up = e.target.closest?.('[data-upgrade-id]');
   if (up) {
@@ -192,7 +195,16 @@ document.getElementById('shop')?.addEventListener('click', (e) => {
   const sell = e.target.closest?.('[data-sell-id]');
   if (sell) {
     game.sellVehicle(sell.getAttribute('data-sell-id'));
+    return;
   }
+  const build = e.target.closest?.('[data-build]');
+  if (build) {
+    game.buyBuilding(build.getAttribute('data-build'));
+  }
+});
+document.getElementById('global-shop')?.addEventListener('click', (e) => {
+  const buff = e.target.closest?.('[data-buff]');
+  if (buff) game.buyBuff(buff.getAttribute('data-buff'));
 });
 
 // Tryk på opgave → vis linje A→B på kortet

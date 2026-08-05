@@ -84,13 +84,19 @@ export function randomAmount(typeKey) {
 
 /**
  * Spawn a job between connected-looking places (any places; path checked at assign).
+ * @param {object[]} places
+ * @param {{ expressBias?: number, cargoBias?: number }} [opts]
  */
-export function generateJob(places) {
+export function generateJob(places, opts = {}) {
   if (!places || places.length < 2) return null;
+  const expressBias = opts.expressBias || 0;
+  const cargoBias = opts.cargoBias || 0;
   const roll = Math.random();
   let typeKey = 'passengers';
-  if (roll < 0.38) typeKey = 'cargo';
-  else if (roll < 0.52) typeKey = 'express';
+  const cargoCut = 0.38 + cargoBias;
+  const expressCut = cargoCut + 0.14 + expressBias;
+  if (roll < cargoCut) typeKey = 'cargo';
+  else if (roll < expressCut) typeKey = 'express';
 
   let from;
   let to;
@@ -108,19 +114,29 @@ export function generateJob(places) {
       p.type === 'harbor'
   );
 
-  if (typeKey === 'cargo' && cargoSrc.length && cargoDst.length) {
-    from = cargoSrc[Math.floor(Math.random() * cargoSrc.length)];
-    const dsts = cargoDst.filter((p) => p.id !== from.id);
-    to = dsts[Math.floor(Math.random() * dsts.length)];
-  } else if (towns.length >= 2) {
-    from = towns[Math.floor(Math.random() * towns.length)];
-    const dsts = towns.filter((p) => p.id !== from.id);
-    to = dsts[Math.floor(Math.random() * dsts.length)];
+  // Prefer stations for passenger/express, warehouses for cargo
+  if (typeKey === 'cargo') {
+    const wh = places.filter((p) => p.buildings?.warehouse);
+    const srcPool = wh.length ? [...cargoSrc, ...wh, ...wh] : cargoSrc;
+    if (srcPool.length && cargoDst.length) {
+      from = srcPool[Math.floor(Math.random() * srcPool.length)];
+      const dsts = cargoDst.filter((p) => p.id !== from.id);
+      to = dsts[Math.floor(Math.random() * dsts.length)];
+    }
   } else {
+    const st = places.filter((p) => p.buildings?.station);
+    const pool = st.length ? [...towns, ...st, ...st] : towns;
+    if (pool.length >= 2) {
+      from = pool[Math.floor(Math.random() * pool.length)];
+      const dsts = towns.filter((p) => p.id !== from.id);
+      to = dsts[Math.floor(Math.random() * dsts.length)];
+    }
+  }
+
+  if (!from || !to) {
     from = places[Math.floor(Math.random() * places.length)];
-    to = places.filter((p) => p.id !== from.id)[
-      Math.floor(Math.random() * (places.length - 1))
-    ];
+    const rest = places.filter((p) => p.id !== from.id);
+    to = rest[Math.floor(Math.random() * rest.length)];
   }
   if (!from || !to) return null;
   return createJob(from, to, typeKey, randomAmount(typeKey));

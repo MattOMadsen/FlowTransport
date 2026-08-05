@@ -37,6 +37,7 @@
         <div class="stat-pill soft" id="level">Lvl 1</div>
         <div class="stat-pill soft">📦 <span id="delivered">0</span></div>
         <div class="stat-pill soft">🚗 <span id="fleet">1</span></div>
+        <button type="button" id="btn-global-shop" class="icon-btn icon-btn-inline" title="Global butik">🛒</button>
         <button type="button" id="btn-mute" class="icon-btn icon-btn-inline" title="Lyd">🔊</button>
         <button type="button" id="btn-pause" class="icon-btn icon-btn-inline" title="Pause">⏸️</button>
         <button type="button" id="btn-menu" class="icon-btn" title="Menu / nyt spil">☰</button>
@@ -112,9 +113,22 @@
               <small>Gods · cap 8</small>
             </button>
           </div>
+          <h4 class="shop-sub">Bygninger</h4>
+          <div id="shop-buildings" class="shop-grid shop-grid-3"></div>
           <h4 class="shop-sub">Flåde i byen</h4>
           <p class="muted shop-hint">Opgrader last (★) eller sælg ledig bil (~55&nbsp;%).</p>
           <div id="shop-fleet" class="shop-fleet"></div>
+        </div>
+      </div>
+
+      <div id="global-shop" class="sheet">
+        <div class="sheet-inner">
+          <div class="sheet-head">
+            <h3>🛒 Global butik</h3>
+            <button type="button" id="global-shop-close" class="icon-btn">✕</button>
+          </div>
+          <p class="muted">Køb permanente buffs (gemmes med din profil).</p>
+          <div id="global-shop-list" class="shop-grid"></div>
         </div>
       </div>
     </div>

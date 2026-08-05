@@ -1,4 +1,4 @@
-/** XP, level, scenario stars – localStorage */
+/** XP, level, scenario stars, shop buffs, achievements – localStorage */
 
 const KEY = 'flowtransport_meta_v1';
 
@@ -6,14 +6,23 @@ const defaultMeta = () => ({
   xp: 0,
   level: 1,
   stars: {}, // scenarioId → 0–3
-  totalDelivered: 0
+  totalDelivered: 0,
+  shopOwned: {},
+  achievements: {}
 });
 
 export function loadMeta() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaultMeta();
-    return { ...defaultMeta(), ...JSON.parse(raw) };
+    const data = JSON.parse(raw);
+    return {
+      ...defaultMeta(),
+      ...data,
+      shopOwned: data.shopOwned && typeof data.shopOwned === 'object' ? data.shopOwned : {},
+      achievements:
+        data.achievements && typeof data.achievements === 'object' ? data.achievements : {}
+    };
   } catch {
     return defaultMeta();
   }

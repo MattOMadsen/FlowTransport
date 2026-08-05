@@ -261,6 +261,18 @@ export class Renderer {
     ctx.strokeText(place.name, iso.x, iso.y + base * 0.5 + 12);
     ctx.fillStyle = 'rgba(15,23,42,0.9)';
     ctx.fillText(place.name, iso.x, iso.y + base * 0.5 + 12);
+
+    // Building badges
+    const b = place.buildings;
+    if (b && (b.station || b.warehouse || b.depot)) {
+      const icons = [];
+      if (b.station) icons.push('🚉');
+      if (b.warehouse) icons.push('🏭');
+      if (b.depot) icons.push('🚏');
+      ctx.font = '12px serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(icons.join(''), iso.x, iso.y - base * 0.9);
+    }
   }
 
   drawVehicle(v) {
