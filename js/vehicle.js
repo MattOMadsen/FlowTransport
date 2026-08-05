@@ -8,6 +8,10 @@ import { pointOnPoly } from './graph.js';
 
 let _vid = 1;
 
+export function resetVehicleIds(n = 1) {
+  _vid = Math.max(1, n | 0);
+}
+
 export class Vehicle {
   constructor({
     x,

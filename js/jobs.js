@@ -1,4 +1,4 @@
-/** Jobs: passengers & cargo A→B */
+/** Jobs: passengers, cargo & ekspres A→B */
 
 export const JOB_TYPES = {
   passengers: {
@@ -20,6 +20,17 @@ export const JOB_TYPES = {
     baseReward: 36,
     rewardPerUnit: 22,
     color: '#b45309'
+  },
+  /** Hurtig person-opgave: færre enheder, højere betaling */
+  express: {
+    id: 'express',
+    label: 'Ekspres',
+    icon: '⚡',
+    vehicle: 'car',
+    unit: 'pakker',
+    baseReward: 55,
+    rewardPerUnit: 32,
+    color: '#7c3aed'
   }
 };
 
@@ -27,6 +38,10 @@ let nextJobId = 1;
 
 export function setNextJobId(n) {
   nextJobId = Math.max(1, n | 0);
+}
+
+export function peekNextJobId() {
+  return nextJobId;
 }
 
 export function createJob(from, to, typeKey, amount) {
@@ -58,11 +73,12 @@ export function jobLabel(job) {
 }
 
 /**
- * Mængder der typisk kræver 2+ ture med standard-bil (cap 4 / 8).
- * Gods: 12–22 · Personer: 10–18
+ * Mængder der typisk kræver 2+ ture (undtagen ekspres).
+ * Gods: 12–22 · Personer: 10–18 · Ekspres: 5–9
  */
 export function randomAmount(typeKey) {
   if (typeKey === 'cargo') return 12 + Math.floor(Math.random() * 11);
+  if (typeKey === 'express') return 5 + Math.floor(Math.random() * 5);
   return 10 + Math.floor(Math.random() * 9);
 }
 
@@ -71,13 +87,26 @@ export function randomAmount(typeKey) {
  */
 export function generateJob(places) {
   if (!places || places.length < 2) return null;
-  const typeKey = Math.random() < 0.45 ? 'cargo' : 'passengers';
-  // Prefer sensible pairs
+  const roll = Math.random();
+  let typeKey = 'passengers';
+  if (roll < 0.38) typeKey = 'cargo';
+  else if (roll < 0.52) typeKey = 'express';
+
   let from;
   let to;
-  const towns = places.filter((p) => p.type === 'capital' || p.type === 'town' || p.type === 'harbor');
-  const cargoSrc = places.filter((p) => p.type === 'farm' || p.type === 'factory' || p.type === 'harbor');
-  const cargoDst = places.filter((p) => p.type === 'capital' || p.type === 'town' || p.type === 'factory' || p.type === 'harbor');
+  const towns = places.filter(
+    (p) => p.type === 'capital' || p.type === 'town' || p.type === 'harbor'
+  );
+  const cargoSrc = places.filter(
+    (p) => p.type === 'farm' || p.type === 'factory' || p.type === 'harbor'
+  );
+  const cargoDst = places.filter(
+    (p) =>
+      p.type === 'capital' ||
+      p.type === 'town' ||
+      p.type === 'factory' ||
+      p.type === 'harbor'
+  );
 
   if (typeKey === 'cargo' && cargoSrc.length && cargoDst.length) {
     from = cargoSrc[Math.floor(Math.random() * cargoSrc.length)];
@@ -89,8 +118,30 @@ export function generateJob(places) {
     to = dsts[Math.floor(Math.random() * dsts.length)];
   } else {
     from = places[Math.floor(Math.random() * places.length)];
-    to = places.filter((p) => p.id !== from.id)[Math.floor(Math.random() * (places.length - 1))];
+    to = places.filter((p) => p.id !== from.id)[
+      Math.floor(Math.random() * (places.length - 1))
+    ];
   }
   if (!from || !to) return null;
   return createJob(from, to, typeKey, randomAmount(typeKey));
+}
+
+/** Rebuild job from saved data + place map */
+export function restoreJob(data, placesById) {
+  const from = placesById.get(data.fromId);
+  const to = placesById.get(data.toId);
+  if (!from || !to) return null;
+  const type = JOB_TYPES[data.type] || JOB_TYPES.passengers;
+  return {
+    id: data.id,
+    type: type.id,
+    typeMeta: type,
+    from,
+    to,
+    amount: data.amount | 0,
+    delivered: data.delivered | 0,
+    reward: data.reward | 0,
+    active: true,
+    claimedBy: null
+  };
 }

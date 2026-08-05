@@ -123,9 +123,13 @@ function renderMenu() {
   document.getElementById('meta-level').textContent = `Level ${meta.level}`;
   document.getElementById('meta-xp').textContent = `${meta.xp} XP`;
 
-  if (game.hasActiveSession && game.scenario) {
+  const disk = game.hasDiskSession?.() || (game.hasActiveSession && game.scenario);
+  if (disk || (game.hasActiveSession && game.scenario)) {
     btnContinue.classList.remove('hidden');
-    btnContinue.textContent = `▶️ Fortsæt: ${game.scenario.name}`;
+    const name = game.scenario?.name || 'gemt spil';
+    btnContinue.textContent = game.hasActiveSession
+      ? `▶️ Fortsæt: ${name}`
+      : `▶️ Fortsæt gemt spil`;
   } else {
     btnContinue.classList.add('hidden');
   }
@@ -232,5 +236,14 @@ if (window.innerWidth < 480 && localStorage.getItem('ft_panel_open') == null) {
   applyPanel();
 }
 
+// Gem ved fane-skift / luk
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') game.persistSession?.();
+});
+window.addEventListener('pagehide', () => game.persistSession?.());
+
 renderMenu();
-game.init();
+game.init().then(() => {
+  // Fortsæt-knap hvis der er disk-session
+  renderMenu();
+});

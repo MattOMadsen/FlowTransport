@@ -59,6 +59,7 @@ export const SHOP_CLASS_IDS = ['car', 'bus', 'van', 'truck'];
 
 export function vehicleCanDoJob(classId, job) {
   const cls = VEHICLE_CLASSES[classId] || VEHICLE_CLASSES.car;
+  // Gods → lastbil/varebil; personer + ekspres → personbil/bus
   if (job.type === 'cargo') return cls.kind === 'truck';
   return cls.kind === 'car';
 }

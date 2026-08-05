@@ -10,9 +10,10 @@ import {
   nearestNode,
   resetGraphIds
 } from './graph.js';
-import { Vehicle } from './vehicle.js';
+import { Vehicle, resetVehicleIds } from './vehicle.js';
 import { buildPlaces } from './places.js';
-import { generateJob, jobComplete, jobLabel } from './jobs.js';
+import { generateJob, jobLabel, setNextJobId, restoreJob } from './jobs.js';
+import { saveSession, loadSessionRaw, clearSession, hasSavedSession } from './session.js';
 import {
   VEHICLE_CLASSES,
   vehicleCanDoJob,
@@ -76,6 +77,7 @@ export class Game {
     this.hasActiveSession = false;
     this._last = 0;
     this._loopGen = 0;
+    this._saveAcc = 0;
 
     this.input = new InputHandler(canvas, {
       getTool: () => this.tool,
@@ -130,8 +132,23 @@ export class Game {
 
   /** Full new game on a scenario (from menu). */
   startScenario(id) {
+    clearSession();
+    this._bootWorld(id, null);
+    this.toast('Nyt spil – tegn veje mellem byerne 🛣️');
+    this.persistSession();
+  }
+
+  /**
+   * Build world from scenario; optional saved data overwrites economy/roads/fleet.
+   * @param {string} scenarioId
+   * @param {object|null} saved
+   */
+  _bootWorld(scenarioId, saved) {
     resetGraphIds();
-    this.scenario = getScenario(id);
+    resetVehicleIds(1);
+    setNextJobId(1);
+
+    this.scenario = getScenario(scenarioId);
     this.worldW = this.scenario.worldW;
     this.worldH = this.scenario.worldH;
     this.money = this.scenario.startMoney;
@@ -151,49 +168,142 @@ export class Game {
     this.tool = 'draw';
     this.meta = loadMeta();
 
-    this.places = buildPlaces(this.worldW, this.worldH, this.scenario.layout, this.scenario.seed);
+    this.places = buildPlaces(
+      this.worldW,
+      this.worldH,
+      this.scenario.layout,
+      this.scenario.seed
+    );
     this.scenery = buildScenery(this.worldW, this.worldH, this.places, this.scenario.seed);
     for (const p of this.places) {
       const node = this.graph.addNode(p.x, p.y, p.id);
       p.nodeId = node.id;
     }
 
-    // Gratis startbil i hovedby: man kan køre første job med det samme efter vej.
-    // (Ikke tvunget – bare onboarding; flåden udvides via by-shop.)
-    const home = this.places.find((p) => p.type === 'capital') || this.places[0];
-    this.vehicles.push(new Vehicle({ x: home.x, y: home.y, classId: 'car', homePlace: home }));
+    if (saved) {
+      this._applySaved(saved);
+    } else {
+      const home = this.places.find((p) => p.type === 'capital') || this.places[0];
+      this.vehicles.push(
+        new Vehicle({ x: home.x, y: home.y, classId: 'car', homePlace: home })
+      );
+      this.seedJobs(4);
+    }
 
-    this.seedJobs(4);
     this.renderer.resize();
-    this.fitCamera();
+    if (saved?.camera) {
+      this.camera.x = saved.camera.x ?? this.camera.x;
+      this.camera.y = saved.camera.y ?? this.camera.y;
+      this.camera.zoom = saved.camera.zoom ?? this.camera.zoom;
+    } else {
+      this.fitCamera();
+    }
     this.hasActiveSession = true;
     this.running = true;
     this._loopGen += 1;
     const gen = this._loopGen;
     this._last = performance.now();
     this.loop(this._last, gen);
+    this.tryAssignJobs();
     this.syncUI();
-    this.toast('Nyt spil – tegn veje mellem byerne 🛣️');
+  }
+
+  _applySaved(saved) {
+    this.money = saved.money ?? this.money;
+    this.stats = {
+      delivered: saved.stats?.delivered | 0,
+      jobsDone: saved.stats?.jobsDone | 0
+    };
+
+    for (const r of saved.roads || []) {
+      if (!r.points || r.points.length < 2) continue;
+      const road = {
+        id: r.id || `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+        points: r.points.map((p) => ({ x: p.x, y: p.y })),
+        lanes: r.lanes || 1,
+        paidCost: r.paidCost || 0,
+        isBridge: !!r.isBridge
+      };
+      this.roads.push(road);
+      this.roadsById.set(road.id, road);
+      this._registerRoad(road);
+    }
+
+    const byId = new Map(this.places.map((p) => [p.id, p]));
+    if (saved.nextJobId) setNextJobId(saved.nextJobId);
+    for (const j of saved.jobs || []) {
+      const job = restoreJob(j, byId);
+      if (job) this.jobs.push(job);
+    }
+    let maxId = 0;
+    for (const j of this.jobs) maxId = Math.max(maxId, j.id | 0);
+    setNextJobId(maxId + 1);
+
+    resetVehicleIds(1);
+    const fleet = saved.fleet || [];
+    if (!fleet.length) {
+      const home = this.places.find((p) => p.type === 'capital') || this.places[0];
+      this.vehicles.push(
+        new Vehicle({ x: home.x, y: home.y, classId: 'car', homePlace: home })
+      );
+    } else {
+      for (const f of fleet) {
+        const home = byId.get(f.homeId) || this.places[0];
+        const x = Number.isFinite(f.x) ? f.x : home.x;
+        const y = Number.isFinite(f.y) ? f.y : home.y;
+        this.vehicles.push(
+          new Vehicle({
+            x,
+            y,
+            classId: f.classId || 'car',
+            homePlace: home,
+            upgradeRank: f.upgradeRank | 0
+          })
+        );
+      }
+    }
+  }
+
+  persistSession() {
+    if (!this.hasActiveSession || !this.scenario) return false;
+    return saveSession(this);
+  }
+
+  /** Load disk-session if any (after page reload). */
+  tryLoadSavedSession() {
+    const data = loadSessionRaw();
+    if (!data) return false;
+    this._bootWorld(data.scenarioId, data);
+    this.toast('Gemt spil genindlæst');
+    return true;
+  }
+
+  hasDiskSession() {
+    return hasSavedSession();
   }
 
   /** Leave to menu without destroying world (optional continue). */
   goToMenu() {
+    this.persistSession();
     this.running = false;
     this.paused = true;
   }
 
-  /** Resume current session from menu. */
+  /** Resume current session from menu (memory or disk). */
   resumeSession() {
-    if (!this.hasActiveSession || !this.scenario) return false;
-    this.paused = false;
-    this.running = true;
-    this._loopGen += 1;
-    const gen = this._loopGen;
-    this._last = performance.now();
-    this.loop(this._last, gen);
-    this.syncUI();
-    this.toast('Fortsætter spil');
-    return true;
+    if (this.hasActiveSession && this.scenario) {
+      this.paused = false;
+      this.running = true;
+      this._loopGen += 1;
+      const gen = this._loopGen;
+      this._last = performance.now();
+      this.loop(this._last, gen);
+      this.syncUI();
+      this.toast('Fortsætter spil');
+      return true;
+    }
+    if (this.tryLoadSavedSession()) return true;
+    return false;
   }
 
   togglePause() {
@@ -974,6 +1084,13 @@ export class Game {
       this._uiAcc = 0;
       this.syncUI();
       this.tryAssignJobs();
+    }
+
+    // Autosave ~ every 4s
+    this._saveAcc = (this._saveAcc || 0) + dt;
+    if (this._saveAcc > 4) {
+      this._saveAcc = 0;
+      this.persistSession();
     }
   }
 
