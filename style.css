@@ -369,6 +369,96 @@ html, body {
   z-index: 10;
 }
 
+/* Minimap – nederst venstre, undgår by-hubs midt på kortet */
+.minimap {
+  position: absolute;
+  left: calc(10px + var(--safe-left));
+  bottom: calc(88px + var(--safe-bottom));
+  width: 148px;
+  height: 112px;
+  z-index: 10;
+  border-radius: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  background: #1e3a2f;
+  cursor: pointer;
+  touch-action: none;
+}
+
+@media (max-width: 480px) {
+  .minimap {
+    width: 120px;
+    height: 90px;
+  }
+}
+
+/* Tutorial */
+.tutorial {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 12px calc(100px + var(--safe-bottom));
+  background: rgba(15, 23, 42, 0.35);
+  pointer-events: auto;
+}
+
+.tutorial.hidden {
+  display: none !important;
+}
+
+.tutorial-card {
+  width: min(380px, 100%);
+  background: var(--card);
+  border-radius: 16px;
+  padding: 1rem 1.1rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.tutorial-card h3 {
+  margin: 0 0 0.4rem;
+  color: #134e4a;
+  font-size: 1.05rem;
+}
+
+.tutorial-card p {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.tutorial-hint {
+  color: var(--muted);
+  font-size: 0.8rem !important;
+}
+
+.tutorial-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 0.6rem;
+}
+
+.tut-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.45rem 0.9rem;
+  border-radius: 12px;
+  border: 2px solid #99f6e4;
+  background: #0d9488;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tut-btn.ghost {
+  background: transparent;
+  color: #0f766e;
+  border-color: #e7e5e4;
+}
+
 .toolbar {
   position: absolute;
   left: 50%;

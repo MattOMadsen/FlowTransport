@@ -1,4 +1,4 @@
-import { LAYOUT_INTRO, LAYOUT_COAST } from './places.js';
+import { LAYOUT_INTRO, LAYOUT_COAST, LAYOUT_VALLEY } from './places.js';
 
 /**
  * @typedef {{ type: 'deliver'|'connect_all'|'money', amount?: number, stars: number }} Goal
@@ -19,6 +19,22 @@ export const SCENARIOS = [
       { type: 'deliver', amount: 12, stars: 1 },
       { type: 'deliver', amount: 30, stars: 2 },
       { type: 'connect_all', stars: 3 }
+    ]
+  },
+  {
+    id: 'valley',
+    name: 'Indre dal',
+    blurb: 'Tættere byer – byg et smart knudepunkt og tjen penge.',
+    seed: 303,
+    startMoney: 2500,
+    worldW: 2000,
+    worldH: 1600,
+    unlockLevel: 1,
+    layout: LAYOUT_VALLEY,
+    goals: [
+      { type: 'deliver', amount: 20, stars: 1 },
+      { type: 'money', amount: 2800, stars: 2 },
+      { type: 'deliver', amount: 45, stars: 3 }
     ]
   },
   {

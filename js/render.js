@@ -1,6 +1,6 @@
 /** 2.5D cozy renderer – DPR-safe camera, scenery */
 
-import { worldToIso, depthKey } from './iso.js';
+import { worldToIso, isoToWorld, depthKey } from './iso.js';
 import { getPlaceImage, getVehicleImage, getTileImage } from './assets.js';
 
 export class Renderer {
@@ -437,6 +437,110 @@ export class Renderer {
 
     const highlight = game.getSelectedJob?.() || null;
     if (highlight) this.drawJobHighlight(highlight);
+
+    this.drawMinimap(game);
+  }
+
+  /**
+   * Top-down minimap (world coords). Viewport = current camera AABB in world.
+   */
+  drawMinimap(game) {
+    const canvas = document.getElementById('minimap');
+    if (!canvas || !game?.worldW || !game.hasActiveSession) {
+      if (canvas) canvas.classList.add('hidden');
+      return;
+    }
+    canvas.classList.remove('hidden');
+
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cssW = canvas.clientWidth || 148;
+    const cssH = canvas.clientHeight || 112;
+    const pw = Math.max(1, Math.floor(cssW * dpr));
+    const ph = Math.max(1, Math.floor(cssH * dpr));
+    if (canvas.width !== pw || canvas.height !== ph) {
+      canvas.width = pw;
+      canvas.height = ph;
+    }
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const pad = 6;
+    const worldW = game.worldW;
+    const worldH = game.worldH;
+    const scale = Math.min((cssW - pad * 2) / worldW, (cssH - pad * 2) / worldH);
+    const ox = (cssW - worldW * scale) / 2;
+    const oy = (cssH - worldH * scale) / 2;
+    const toMap = (x, y) => ({ x: ox + x * scale, y: oy + y * scale });
+
+    // Cache for click handler
+    game._minimapMap = { ox, oy, scale, cssW, cssH, worldW, worldH };
+
+    ctx.fillStyle = '#1a3328';
+    ctx.fillRect(0, 0, cssW, cssH);
+    ctx.fillStyle = '#2d5a45';
+    ctx.fillRect(ox, oy, worldW * scale, worldH * scale);
+
+    // Roads
+    for (const road of game.roads || []) {
+      const pts = road.points;
+      if (!pts?.length) continue;
+      ctx.beginPath();
+      const p0 = toMap(pts[0].x, pts[0].y);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < pts.length; i++) {
+        const p = toMap(pts[i].x, pts[i].y);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.strokeStyle = (road.lanes || 1) >= 2 ? '#fbbf24' : '#94a3b8';
+      ctx.lineWidth = (road.lanes || 1) >= 2 ? 2.2 : 1.4;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+
+    // Places
+    for (const p of game.places || []) {
+      const m = toMap(p.x, p.y);
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, p.type === 'capital' ? 3.5 : 2.6, 0, Math.PI * 2);
+      ctx.fillStyle = p.color || '#60a5fa';
+      ctx.fill();
+    }
+
+    // Vehicles
+    for (const v of game.vehicles || []) {
+      const m = toMap(v.x, v.y);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(m.x - 1.5, m.y - 1.5, 3, 3);
+    }
+
+    // Viewport rectangle (screen corners → world)
+    const cam = game.camera;
+    const sw = this.cssW || window.innerWidth;
+    const sh = this.cssH || window.innerHeight;
+    const corners = [
+      [0, 0],
+      [sw, 0],
+      [sw, sh],
+      [0, sh]
+    ].map(([sx, sy]) => {
+      const view = cam.screenToView(sx, sy);
+      return isoToWorld(view.x, view.y);
+    });
+    ctx.beginPath();
+    const c0 = toMap(corners[0].x, corners[0].y);
+    ctx.moveTo(c0.x, c0.y);
+    for (let i = 1; i < corners.length; i++) {
+      const c = toMap(corners[i].x, corners[i].y);
+      ctx.lineTo(c.x, c.y);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = 'rgba(45, 212, 191, 0.95)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(45, 212, 191, 0.12)';
+    ctx.fill();
   }
 
   /** Stiplet linje + rings mellem job.from og job.to */

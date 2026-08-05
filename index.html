@@ -55,8 +55,22 @@
         </div>
       </div>
 
+      <canvas id="minimap" class="minimap" width="160" height="120" aria-label="Minimap"></canvas>
+
       <div class="zoom-cluster">
         <button type="button" id="btn-fit" class="icon-btn">Fit</button>
+      </div>
+
+      <div id="tutorial" class="tutorial hidden" role="dialog" aria-labelledby="tut-title">
+        <div class="tutorial-card">
+          <h3 id="tut-title">Velkommen</h3>
+          <p id="tut-body"></p>
+          <p id="tut-hint" class="tutorial-hint"></p>
+          <div class="tutorial-actions">
+            <button type="button" id="tut-skip" class="tut-btn ghost">Spring over</button>
+            <button type="button" id="tut-next" class="tut-btn">Næste</button>
+          </div>
+        </div>
       </div>
 
       <nav class="toolbar">

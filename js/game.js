@@ -210,6 +210,16 @@ export class Game {
     return m;
   }
 
+  /** Center camera on world point (minimap tap). */
+  centerOnWorld(wx, wy) {
+    if (!Number.isFinite(wx) || !Number.isFinite(wy)) return;
+    const iso = worldToIso(wx, wy);
+    const w = this.renderer.cssW || window.innerWidth;
+    const h = this.renderer.cssH || window.innerHeight;
+    this.camera.x = w / 2 - iso.x * this.camera.zoom;
+    this.camera.y = h / 2 - iso.y * this.camera.zoom;
+  }
+
   fitCamera() {
     if (!this.worldW || !this.worldH) return;
     const w = this.renderer.cssW || window.innerWidth;

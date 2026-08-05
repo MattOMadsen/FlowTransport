@@ -47,6 +47,21 @@ export const LAYOUT_INTRO = [
   { rx: 0.52, ry: 0.86, rr: 0.025, type: 'farm' }
 ];
 
+/** Dal – tæt net, blandet gods/personer */
+export const LAYOUT_VALLEY = [
+  { rx: 0.50, ry: 0.48, rr: 0.030, type: 'capital' },
+  { rx: 0.22, ry: 0.22, rr: 0.025, type: 'town' },
+  { rx: 0.48, ry: 0.18, rr: 0.024, type: 'farm' },
+  { rx: 0.75, ry: 0.20, rr: 0.025, type: 'town' },
+  { rx: 0.88, ry: 0.40, rr: 0.026, type: 'factory' },
+  { rx: 0.72, ry: 0.55, rr: 0.024, type: 'farm' },
+  { rx: 0.55, ry: 0.72, rr: 0.025, type: 'town' },
+  { rx: 0.28, ry: 0.70, rr: 0.026, type: 'factory' },
+  { rx: 0.12, ry: 0.50, rr: 0.028, type: 'harbor' },
+  { rx: 0.38, ry: 0.40, rr: 0.023, type: 'farm' },
+  { rx: 0.65, ry: 0.35, rr: 0.023, type: 'town' }
+];
+
 /** Kyst – mange steder, gods-kæder */
 export const LAYOUT_COAST = [
   { rx: 0.50, ry: 0.42, rr: 0.030, type: 'capital' },

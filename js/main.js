@@ -1,6 +1,11 @@
 import { Game } from './game.js';
 import { SCENARIOS } from './scenarios.js';
 import { loadMeta, getScenarioStars } from './meta.js';
+import {
+  TUTORIAL_STEPS,
+  shouldShowTutorial,
+  setTutorialDone
+} from './tutorial.js';
 
 const canvas = document.getElementById('game');
 const ui = {
@@ -18,6 +23,85 @@ const game = new Game(canvas, ui);
 const menu = document.getElementById('menu');
 const hud = document.getElementById('hud');
 const btnContinue = document.getElementById('btn-continue');
+
+// Tutorial
+let tutStep = 0;
+const tutEl = document.getElementById('tutorial');
+const tutTitle = document.getElementById('tut-title');
+const tutBody = document.getElementById('tut-body');
+const tutHint = document.getElementById('tut-hint');
+const tutNext = document.getElementById('tut-next');
+
+function showTutorialStep(i) {
+  const step = TUTORIAL_STEPS[i];
+  if (!step || !tutEl) {
+    hideTutorial();
+    return;
+  }
+  tutStep = i;
+  if (tutTitle) tutTitle.textContent = step.title;
+  if (tutBody) tutBody.textContent = step.body;
+  if (tutHint) tutHint.textContent = step.hint;
+  if (tutNext) tutNext.textContent = i >= TUTORIAL_STEPS.length - 1 ? 'Spil' : 'Næste';
+  tutEl.classList.remove('hidden');
+}
+
+function hideTutorial() {
+  tutEl?.classList.add('hidden');
+}
+
+function maybeStartTutorial() {
+  if (shouldShowTutorial()) showTutorialStep(0);
+  else hideTutorial();
+}
+
+document.getElementById('tut-skip')?.addEventListener('click', () => {
+  setTutorialDone();
+  hideTutorial();
+});
+tutNext?.addEventListener('click', () => {
+  if (tutStep >= TUTORIAL_STEPS.length - 1) {
+    setTutorialDone();
+    hideTutorial();
+    return;
+  }
+  showTutorialStep(tutStep + 1);
+});
+
+// Minimap: tryk → hop kamera
+const minimap = document.getElementById('minimap');
+function minimapToWorld(clientX, clientY) {
+  if (!minimap || !game._minimapMap) return null;
+  const r = minimap.getBoundingClientRect();
+  const mx = clientX - r.left;
+  const my = clientY - r.top;
+  const { ox, oy, scale, worldW, worldH } = game._minimapMap;
+  if (!scale) return null;
+  const wx = (mx - ox) / scale;
+  const wy = (my - oy) / scale;
+  if (wx < 0 || wy < 0 || wx > worldW || wy > worldH) return null;
+  // Snap to nearest place if close
+  let best = null;
+  let bestD = 80;
+  for (const p of game.places || []) {
+    const d = Math.hypot(p.x - wx, p.y - wy);
+    if (d < bestD) {
+      bestD = d;
+      best = p;
+    }
+  }
+  if (best) return { x: best.x, y: best.y, name: best.name };
+  return { x: wx, y: wy, name: null };
+}
+function onMinimapPointer(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const w = minimapToWorld(e.clientX, e.clientY);
+  if (!w) return;
+  game.centerOnWorld(w.x, w.y);
+  if (w.name) game.toast(w.name);
+}
+minimap?.addEventListener('pointerdown', onMinimapPointer);
 
 function renderMenu() {
   const meta = loadMeta();
@@ -58,6 +142,7 @@ async function startNewGame(id) {
   hud.classList.remove('hidden');
   await game.init();
   game.startScenario(id);
+  maybeStartTutorial();
 }
 
 function continueGame() {
@@ -67,10 +152,12 @@ function continueGame() {
   }
   menu.classList.add('hidden');
   hud.classList.remove('hidden');
+  hideTutorial();
 }
 
 function openMenu() {
   game.goToMenu();
+  hideTutorial();
   hud.classList.add('hidden');
   menu.classList.remove('hidden');
   renderMenu();
