@@ -2,10 +2,19 @@
 
 const cache = new Map();
 
+/** Bump when assets change so browsers/CDN ikke serverer gamle PNG’er */
+export const ASSET_VER = '20260806b';
+
+function withVer(src) {
+  if (!src) return src;
+  return src.includes('?') ? `${src}&v=${ASSET_VER}` : `${src}?v=${ASSET_VER}`;
+}
+
 export function loadImage(src) {
-  if (cache.has(src)) return cache.get(src);
+  const url = withVer(src);
+  if (cache.has(url)) return cache.get(url);
   const img = new Image();
-  img.src = src;
+  img.src = url;
   const p = new Promise((resolve) => {
     if (img.complete && img.naturalWidth) resolve(img);
     else {
@@ -13,7 +22,7 @@ export function loadImage(src) {
       img.onerror = () => resolve(null);
     }
   });
-  cache.set(src, p);
+  cache.set(url, p);
   return p;
 }
 

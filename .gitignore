@@ -1,2 +1,4 @@
 data/
-node_modules/\ndata/\n.DS_Store\n*.log
+node_modules/
+.DS_Store
+*.log
