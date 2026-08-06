@@ -69,6 +69,7 @@ Regler:
 - Undo: slet sidste vej med delvis refund
 - Vejklasser: alm (1×) → 2-spor (~1,28×) → motorvej (~1,72× + bilbonus for car/van)
 - Bil-slid 0–100 fra leverancer; service i by-shop; slid sænker fart og salgspris (let TTD, ikke nedbrud)
+- Ansæt folk (global shop): permanente buffs – billigere veje/opgradering/service, mere snap, jobs – **ingen** offline auto-byg
 
 ## Progression (MVP)
 

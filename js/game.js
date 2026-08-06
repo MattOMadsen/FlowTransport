@@ -49,7 +49,11 @@ import {
   BUILDINGS,
   hasShopBuff,
   roadCostMul,
-  snapRadiusMul
+  snapRadiusMul,
+  serviceCostMul,
+  roadUpgradeCostMul,
+  jobSpawnInterval,
+  hiredCount
 } from './shop.js';
 import { tryUnlock } from './achievements.js';
 import { Camera } from './camera.js';
@@ -663,10 +667,13 @@ export class Game {
     if (!road) return 0;
     const len = polyLength(road.points) || 0;
     const from = fromLanes != null ? fromLanes | 0 : road.lanes || 1;
+    let cost;
     if (from >= 2) {
-      return Math.max(90, Math.round(HIGHWAY_UPGRADE_BASE + len * HIGHWAY_UPGRADE_PER_PX));
+      cost = Math.max(90, Math.round(HIGHWAY_UPGRADE_BASE + len * HIGHWAY_UPGRADE_PER_PX));
+    } else {
+      cost = Math.max(45, Math.round(ROAD_UPGRADE_BASE + len * ROAD_UPGRADE_PER_PX));
     }
-    return Math.max(45, Math.round(ROAD_UPGRADE_BASE + len * ROAD_UPGRADE_PER_PX));
+    return Math.max(1, Math.round(cost * roadUpgradeCostMul(this.meta)));
   }
 
   /** Upgrade tool: tap → 2-spor, tap igen → motorvej (hurtigere + bredere). */
@@ -1032,25 +1039,28 @@ export class Game {
     const list = document.getElementById('global-shop-list');
     if (!list) return;
     const level = this.meta?.level || 1;
-    list.innerHTML = SHOP_BUFFS.map((item) => {
-      const owned = hasShopBuff(this.meta, item.id);
-      const locked = level < item.unlockLevel;
-      const disabled = owned || locked || this.money < item.price;
-      return `
-        <button type="button" class="shop-item global-item" data-buff="${item.id}"
+    const n = hiredCount(this.meta);
+    list.innerHTML =
+      `<p class="hire-summary muted">Ansat: <strong>${n}/${SHOP_BUFFS.length}</strong> · de bygger ikke selv veje – de hjælper dig</p>` +
+      SHOP_BUFFS.map((item) => {
+        const owned = hasShopBuff(this.meta, item.id);
+        const locked = level < item.unlockLevel;
+        const disabled = owned || locked || this.money < item.price;
+        return `
+        <button type="button" class="shop-item global-item${owned ? ' hired' : ''}" data-buff="${item.id}"
           ${disabled && !owned ? 'disabled' : ''} ${owned ? 'disabled' : ''}>
           <span>${item.icon} ${item.label}</span>
-          <strong>${owned ? 'Ejet' : locked ? `Lvl ${item.unlockLevel}` : `${item.price} kr`}</strong>
+          <strong>${owned ? 'Ansat ✓' : locked ? `Lvl ${item.unlockLevel}` : `Ansæt ${item.price} kr`}</strong>
           <small>${item.desc}</small>
         </button>`;
-    }).join('');
+      }).join('');
   }
 
   buyBuff(buffId) {
     const item = SHOP_BUFFS.find((b) => b.id === buffId);
     if (!item) return;
     if (hasShopBuff(this.meta, buffId)) {
-      this.toast('Allerede købt');
+      this.toast('Allerede ansat');
       return;
     }
     if ((this.meta.level || 1) < item.unlockLevel) {
@@ -1068,7 +1078,9 @@ export class Game {
     this.meta.shopOwned[buffId] = true;
     saveMeta(this.meta);
     playBuy();
-    this.toast(`${item.icon} ${item.label} købt`);
+    this.unlockAch('hire_staff');
+    if (hiredCount(this.meta) >= 3) this.unlockAch('hire_team');
+    this.toast(`${item.icon} Ansat: ${item.label}`);
     this.renderGlobalShop();
     this.persistSession();
     this.syncUI();
@@ -1144,7 +1156,10 @@ export class Game {
         const upP = upgradePrice(rank, v.classId);
         const wear = Math.round(v.wear || 0);
         const sellP = sellPriceForClass(v.classId, rank, wear);
-        const svcP = serviceCost(v.classId, wear);
+        const svcP = Math.max(
+          1,
+          Math.round(serviceCost(v.classId, wear) * serviceCostMul(this.meta))
+        );
         const needsService = wear >= 15;
         const icon = cls.icon || (cls.kind === 'truck' ? '🚚' : '🚗');
         const status = busy ? 'På job…' : 'Ledig';
@@ -1248,7 +1263,10 @@ export class Game {
       this.toast('Bilen trænger ikke til service endnu');
       return;
     }
-    const price = serviceCost(v.classId, wear);
+    const price = Math.max(
+      1,
+      Math.round(serviceCost(v.classId, wear) * serviceCostMul(this.meta))
+    );
     if (this.money < price) {
       this.toast('Ikke nok penge til service');
       playError();
@@ -1386,9 +1404,10 @@ export class Game {
   }
 
   update(dt) {
-    // Jobs spawn
+    // Jobs spawn (trafikplanlægger → lidt oftere)
     this.jobTimer += dt;
-    if (this.jobTimer > 7 && this.jobs.filter((j) => j.active).length < 6) {
+    const spawnEvery = jobSpawnInterval(this.meta);
+    if (this.jobTimer > spawnEvery && this.jobs.filter((j) => j.active).length < 6) {
       this.jobTimer = 0;
       const j = generateJob(this.places, this.jobSpawnOpts());
       if (j) {

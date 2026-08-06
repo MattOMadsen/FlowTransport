@@ -8,6 +8,8 @@ export const ACHIEVEMENTS = [
   { id: 'highway', icon: '🏎️', label: 'Motorvej', desc: 'Opgrader en vej til motorvej', xp: 35 },
   { id: 'upgrade_car', icon: '⬆', label: 'Tune', desc: 'Opgrader en bil', xp: 20 },
   { id: 'service_car', icon: '🔧', label: 'Mekaniker', desc: 'Servicer en bil', xp: 20 },
+  { id: 'hire_staff', icon: '👷', label: 'Første ansættelse', desc: 'Ansæt en medarbejder', xp: 20 },
+  { id: 'hire_team', icon: '👥', label: 'Lille hold', desc: 'Ansæt mindst 3 medarbejdere', xp: 35 },
   { id: 'replace_worn', icon: '♻️', label: 'Udskift', desc: 'Sælg en meget slidt bil', xp: 25 },
   { id: 'sell_car', icon: '💰', label: 'Salg', desc: 'Sælg en bil', xp: 15 },
   { id: 'express', icon: '⚡', label: 'Ekspres', desc: 'Fuldfør et ekspres-job', xp: 30 },
