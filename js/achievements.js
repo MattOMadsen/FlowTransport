@@ -7,6 +7,8 @@ export const ACHIEVEMENTS = [
   { id: 'dual_lane', icon: '🛤️', label: '2-spor', desc: 'Opgrader en vej til 2-spor', xp: 25 },
   { id: 'highway', icon: '🏎️', label: 'Motorvej', desc: 'Opgrader en vej til motorvej', xp: 35 },
   { id: 'upgrade_car', icon: '⬆', label: 'Tune', desc: 'Opgrader en bil', xp: 20 },
+  { id: 'service_car', icon: '🔧', label: 'Mekaniker', desc: 'Servicer en bil', xp: 20 },
+  { id: 'replace_worn', icon: '♻️', label: 'Udskift', desc: 'Sælg en meget slidt bil', xp: 25 },
   { id: 'sell_car', icon: '💰', label: 'Salg', desc: 'Sælg en bil', xp: 15 },
   { id: 'express', icon: '⚡', label: 'Ekspres', desc: 'Fuldfør et ekspres-job', xp: 30 },
   { id: 'connect_all', icon: '🔗', label: 'Netværk', desc: 'Forbind alle steder', xp: 40 },

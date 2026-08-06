@@ -21,7 +21,9 @@ import {
   upgradePrice,
   canUpgrade,
   sellPriceForClass,
-  roadLaneLabel
+  roadLaneLabel,
+  serviceCost,
+  wearLabel
 } from './fleet.js';
 import {
   getScenario,
@@ -313,7 +315,8 @@ export class Game {
             y,
             classId: f.classId || 'car',
             homePlace: home,
-            upgradeRank: f.upgradeRank | 0
+            upgradeRank: f.upgradeRank | 0,
+            wear: f.wear | 0
           })
         );
       }
@@ -1139,17 +1142,27 @@ export class Game {
         const busy = !v.idle;
         const upOk = canUpgrade(rank);
         const upP = upgradePrice(rank, v.classId);
-        const sellP = sellPriceForClass(v.classId, rank);
+        const wear = Math.round(v.wear || 0);
+        const sellP = sellPriceForClass(v.classId, rank, wear);
+        const svcP = serviceCost(v.classId, wear);
+        const needsService = wear >= 15;
         const icon = cls.icon || (cls.kind === 'truck' ? '🚚' : '🚗');
         const status = busy ? 'På job…' : 'Ledig';
         const rankLabel = rank > 0 ? ` · ★${rank}` : '';
+        const wearTxt = wearLabel(wear);
         return `
           <div class="fleet-row" data-vid="${v.id}">
             <div class="fleet-info">
               <strong>${icon} ${cls.label}${rankLabel}</strong>
-              <small>Cap ${v.capacity} · ${status}</small>
+              <small>Cap ${v.capacity} · ${status} · ${wearTxt} ${wear}%</small>
             </div>
             <div class="fleet-actions">
+              <button type="button" class="fleet-btn fleet-svc"
+                data-service-id="${v.id}"
+                ${busy || !needsService ? 'disabled' : ''}
+                title="Service (−${svcP} kr, nulstiller slid)">
+                🔧 ${svcP}
+              </button>
               <button type="button" class="fleet-btn fleet-up"
                 data-upgrade-id="${v.id}"
                 ${busy || !upOk ? 'disabled' : ''}
@@ -1159,7 +1172,7 @@ export class Game {
               <button type="button" class="fleet-btn fleet-sell"
                 data-sell-id="${v.id}"
                 ${busy ? 'disabled' : ''}
-                title="Sælg bil (+${sellP} kr)">
+                title="Sælg / udskift (+${sellP} kr${wear >= 70 ? ', slidt = lavere pris' : ''})">
                 Sælg ${sellP}
               </button>
             </div>
@@ -1222,6 +1235,35 @@ export class Game {
     this.syncUI();
   }
 
+  serviceVehicle(vehicleId) {
+    const v = this.vehicles.find((x) => x.id === vehicleId);
+    if (!v) return;
+    if (!v.idle) {
+      this.toast('Kan ikke service midt i et job');
+      playError();
+      return;
+    }
+    const wear = Math.round(v.wear || 0);
+    if (wear < 15) {
+      this.toast('Bilen trænger ikke til service endnu');
+      return;
+    }
+    const price = serviceCost(v.classId, wear);
+    if (this.money < price) {
+      this.toast('Ikke nok penge til service');
+      playError();
+      return;
+    }
+    this.money -= price;
+    v.service();
+    playBuy();
+    this.unlockAch('service_car');
+    this.toast(`Service færdig (−${price} kr) 🔧`);
+    this.renderShopFleet();
+    this.persistSession();
+    this.syncUI();
+  }
+
   sellVehicle(vehicleId) {
     const v = this.vehicles.find((x) => x.id === vehicleId);
     if (!v) return;
@@ -1235,12 +1277,14 @@ export class Game {
       playError();
       return;
     }
-    const refund = sellPriceForClass(v.classId, v.upgradeRank);
+    const wear = Math.round(v.wear || 0);
+    const refund = sellPriceForClass(v.classId, v.upgradeRank, wear);
     this.money += refund;
     this.vehicles = this.vehicles.filter((x) => x.id !== vehicleId);
     playBuy();
     this.unlockAch('sell_car');
-    this.toast(`Solgt (+${refund} kr)`);
+    if (wear >= 70) this.unlockAch('replace_worn');
+    this.toast(wear >= 70 ? `Udskiftet (+${refund} kr)` : `Solgt (+${refund} kr)`);
     this.renderShopFleet();
     this.persistSession();
     this.syncUI();
@@ -1364,6 +1408,12 @@ export class Game {
         const share = Math.round((v.job.reward * amount) / Math.max(1, v.job.amount));
         this.money += share;
         this.stats.delivered += amount;
+        if (typeof v.registerWear === 'function') v.registerWear(amount);
+        else v.wear = Math.min(100, (v.wear || 0) + amount * 1.15);
+        if (v.wear >= 75 && !v._wearWarned) {
+          v._wearWarned = true;
+          this.toast('🔧 En bil er slidt – service i by-shop');
+        }
         addXp(this.meta, XP_REWARDS.deliver);
         this.meta.totalDelivered = (this.meta.totalDelivered || 0) + amount;
         saveMeta(this.meta);

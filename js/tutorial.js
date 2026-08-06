@@ -12,8 +12,8 @@ export const TUTORIAL_STEPS = [
   {
     id: 'buy',
     title: '2 · Køb og opgrader biler',
-    body: 'Tryk midt i en by for shop. Køb bil, bus, varebil eller lastbil. Opgrader last (★) eller sælg ledige biler.',
-    hint: '🏙️ Tryk by · flåde nederst i shop'
+    body: 'Tryk midt i en by for shop. Køb bil, bus, varebil eller lastbil. Opgrader last (★), servicer slidte biler (🔧) eller sælg/udskift.',
+    hint: '🏙️ Shop · 🔧 service · Sælg når slidt'
   },
   {
     id: 'jobs',

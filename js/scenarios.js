@@ -9,11 +9,11 @@ export const SCENARIOS = [
   {
     id: 'intro',
     name: 'Første forbindelser',
-    blurb: 'Større dal med byer, farme, fabrik og havn – lær netværket.',
+    blurb: 'Stor dal med byer, farme, fabrik og havn – lær netværket. Lange stræk belønner motorvej.',
     seed: 101,
-    startMoney: 2200,
-    worldW: 2200,
-    worldH: 1700,
+    startMoney: 2400,
+    worldW: 2800,
+    worldH: 2100,
     unlockLevel: 1,
     unlockFrom: null,
     layout: LAYOUT_INTRO,
@@ -26,11 +26,11 @@ export const SCENARIOS = [
   {
     id: 'valley',
     name: 'Indre dal',
-    blurb: 'Tættere byer – byg et smart knudepunkt og tjen penge.',
+    blurb: 'Større dal – byg knudepunkt, 2-spor i byen og motorvej ud ad.',
     seed: 303,
-    startMoney: 2500,
-    worldW: 2000,
-    worldH: 1600,
+    startMoney: 2700,
+    worldW: 2700,
+    worldH: 2100,
     /** Åben ved level 2 ELLER 1★ på intro (første stjerne-mål). */
     unlockLevel: 2,
     unlockFrom: { scenarioId: 'intro', stars: 1 },
@@ -44,35 +44,35 @@ export const SCENARIOS = [
   {
     id: 'coast',
     name: 'Kystlinjen',
-    blurb: 'To havne, mange fabrikker og farme – mere gods og længere ruter.',
+    blurb: 'Stor kyst – to havne, lange godsruter. Motorvej mærkes her.',
     seed: 202,
-    startMoney: 2800,
-    worldW: 2600,
-    worldH: 1900,
+    startMoney: 3200,
+    worldW: 3400,
+    worldH: 2500,
     unlockLevel: 3,
     unlockFrom: { scenarioId: 'valley', stars: 2 },
     layout: LAYOUT_COAST,
     goals: [
-      { type: 'deliver', amount: 18, stars: 1 },
-      { type: 'money', amount: 3200, stars: 2 },
-      { type: 'deliver', amount: 50, stars: 3 }
+      { type: 'deliver', amount: 22, stars: 1 },
+      { type: 'money', amount: 3800, stars: 2 },
+      { type: 'deliver', amount: 55, stars: 3 }
     ]
   },
   {
     id: 'islands',
     name: 'Ø-broerne',
-    blurb: 'To kyster og en hovedby midt i – byg broer og forbinde nettet.',
+    blurb: 'To store kyster og hovedby midt i – broer + lange stræk.',
     seed: 404,
-    startMoney: 3000,
-    worldW: 2400,
-    worldH: 1800,
+    startMoney: 3400,
+    worldW: 3200,
+    worldH: 2400,
     unlockLevel: 4,
     unlockFrom: { scenarioId: 'coast', stars: 2 },
     layout: LAYOUT_ISLANDS,
     goals: [
-      { type: 'deliver', amount: 16, stars: 1 },
+      { type: 'deliver', amount: 20, stars: 1 },
       { type: 'connect_all', stars: 2 },
-      { type: 'deliver', amount: 40, stars: 3 }
+      { type: 'deliver', amount: 48, stars: 3 }
     ]
   }
 ];

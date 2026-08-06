@@ -63,6 +63,7 @@ export function serializeSession(game) {
   const fleet = (game.vehicles || []).map((v) => ({
     classId: v.classId,
     upgradeRank: v.upgradeRank | 0,
+    wear: Math.round(v.wear || 0),
     homeId: v.homePlace?.id || null,
     x: v.x,
     y: v.y

@@ -137,11 +137,53 @@ export function canUpgrade(upgradeRank) {
 }
 
 /** Refund when selling (idle vehicles only). */
-export function sellPriceForClass(classId, upgradeRank = 0) {
+export function sellPriceForClass(classId, upgradeRank = 0, wear = 0) {
   const c = getClass(classId);
   const rank = Math.max(0, Math.min(FLEET.maxUpgradeRank, upgradeRank | 0));
   const value = c.buyPrice + rank * FLEET.sellUpgradeBonus;
-  return Math.max(20, Math.round(value * FLEET.sellRefund));
+  const wearMul = sellWearMul(wear);
+  return Math.max(15, Math.round(value * FLEET.sellRefund * wearMul));
+}
+
+/** --- Slid / service (let TTD-agtig – ikke fuld nedbrud) --- */
+
+/** 0–100. Stiger pr. leveret enhed. */
+export const WEAR_PER_UNIT = 1.15;
+export const WEAR_MAX = 100;
+
+/** Fart falder blidt når bilen slides. */
+export function wearSpeedMul(wear = 0) {
+  const w = Math.max(0, Math.min(WEAR_MAX, wear));
+  if (w >= 95) return 0.7;
+  if (w >= 75) return 0.84;
+  if (w >= 50) return 0.92;
+  return 1;
+}
+
+/** Salgspris falder med slid. */
+export function sellWearMul(wear = 0) {
+  const w = Math.max(0, Math.min(WEAR_MAX, wear));
+  return Math.max(0.35, 1 - w * 0.0055);
+}
+
+export function addWear(wear, amount = 1) {
+  return Math.min(WEAR_MAX, Math.max(0, (wear || 0) + amount * WEAR_PER_UNIT));
+}
+
+/** Service koster mere jo mere slidt. */
+export function serviceCost(classId, wear = 0) {
+  const c = getClass(classId);
+  const w = Math.max(0, Math.min(WEAR_MAX, wear));
+  return Math.max(28, Math.round(32 + c.buyPrice * 0.06 + w * 0.85));
+}
+
+export function wearLabel(wear = 0) {
+  const w = wear | 0;
+  if (w >= 90) return 'Udskift / service';
+  if (w >= 70) return 'Slidt';
+  if (w >= 40) return 'Brugt';
+  if (w >= 15) return 'Brugt lidt';
+  return 'Ny';
 }
 
 export function classIcon(classId) {

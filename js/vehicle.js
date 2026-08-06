@@ -3,7 +3,15 @@
  * States: park | to_pickup | loading | to_dropoff | unload
  */
 
-import { VEHICLE_CLASSES, cargoCapacity, speedForClass, roadSpeedMul } from './fleet.js';
+import {
+  VEHICLE_CLASSES,
+  cargoCapacity,
+  speedForClass,
+  roadSpeedMul,
+  wearSpeedMul,
+  addWear,
+  WEAR_MAX
+} from './fleet.js';
 import { pointOnPoly } from './graph.js';
 
 let _vid = 1;
@@ -19,11 +27,15 @@ export class Vehicle {
     classId = 'car',
     homePlace = null,
     owner = 'player',
-    upgradeRank = 0
+    upgradeRank = 0,
+    wear = 0
   }) {
     this.id = `v${_vid++}`;
     this.classId = classId;
     this.upgradeRank = Math.max(0, upgradeRank | 0);
+    /** 0–100 slid (leverancer). Service nulstiller. */
+    this.wear = Math.max(0, Math.min(WEAR_MAX, Number(wear) || 0));
+    this._wearWarned = this.wear >= 75;
     const cls = VEHICLE_CLASSES[classId] || VEHICLE_CLASSES.car;
     this.kind = cls.kind;
     this.sprite = cls.sprite;
@@ -42,6 +54,17 @@ export class Vehicle {
     this.loadTimer = 0;
     this.color = cls.kind === 'truck' ? '#b45309' : '#3b82f6';
     this.applyStats();
+  }
+
+  /** Tilføj slid efter levering (enheder). */
+  registerWear(amount = 1) {
+    this.wear = addWear(this.wear, amount);
+    return this.wear;
+  }
+
+  service() {
+    this.wear = 0;
+    this._wearWarned = false;
   }
 
   /** Recompute speed/capacity from class + upgrade rank. */
@@ -154,9 +177,10 @@ export class Vehicle {
 
     const pts = step.reverse ? [...road.points].reverse() : road.points;
     const len = edge.length || 1;
-    // Alm / 2-spor / motorvej + bilklasse-bonus på motorvej
+    // Alm / 2-spor / motorvej + bilklasse + slid
     const laneMul = roadSpeedMul(this.classId, road.lanes || 1);
-    this.t += (this.speed * laneMul * dt) / len;
+    const wearMul = wearSpeedMul(this.wear);
+    this.t += (this.speed * laneMul * wearMul * dt) / len;
 
     if (this.t >= 0.99) {
       const pos = pointOnPoly(pts, 1);

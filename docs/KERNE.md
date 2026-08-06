@@ -68,6 +68,7 @@ Regler:
 - Køb bil i by-shop (tap by)
 - Undo: slet sidste vej med delvis refund
 - Vejklasser: alm (1×) → 2-spor (~1,28×) → motorvej (~1,72× + bilbonus for car/van)
+- Bil-slid 0–100 fra leverancer; service i by-shop; slid sænker fart og salgspris (let TTD, ikke nedbrud)
 
 ## Progression (MVP)
 

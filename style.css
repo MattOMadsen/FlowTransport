@@ -752,8 +752,11 @@ html, body {
 
 .fleet-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.35rem;
   flex-shrink: 0;
+  justify-content: flex-end;
+  max-width: 11.5rem;
 }
 
 .fleet-btn {
@@ -771,6 +774,11 @@ html, body {
 .fleet-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.fleet-svc {
+  border-color: #fcd34d;
+  color: #b45309;
 }
 
 .fleet-up {

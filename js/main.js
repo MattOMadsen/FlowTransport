@@ -218,6 +218,11 @@ document.getElementById('shop')?.addEventListener('click', (e) => {
     game.upgradeVehicle(up.getAttribute('data-upgrade-id'));
     return;
   }
+  const svc = e.target.closest?.('[data-service-id]');
+  if (svc) {
+    game.serviceVehicle(svc.getAttribute('data-service-id'));
+    return;
+  }
   const sell = e.target.closest?.('[data-sell-id]');
   if (sell) {
     game.sellVehicle(sell.getAttribute('data-sell-id'));
