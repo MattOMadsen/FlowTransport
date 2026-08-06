@@ -397,7 +397,7 @@ export class Renderer {
     const ctx = this.ctx;
     const iso = worldToIso(place.x, place.y);
     const img = getPlaceImage(place.type, place.variant || 0);
-    const base = Math.max(36, place.r * 1.15);
+    const base = Math.max(40, place.r * 1.28);
 
     // Soft ground contact + light pad
     ctx.beginPath();
