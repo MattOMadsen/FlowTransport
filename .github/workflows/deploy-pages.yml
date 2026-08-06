@@ -1,4 +1,5 @@
-# Deploy static FlowTransport til GitHub Pages (undgår broken Jekyll-builds)
+# Deploy static FlowTransport til GitHub Pages via gh-pages branch
+# (undgår actions/deploy-pages OIDC, som har fejlet med "No keys from key endpoint")
 name: Deploy Pages
 
 on:
@@ -7,9 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
@@ -17,9 +16,6 @@ concurrency:
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -27,18 +23,15 @@ jobs:
 
       - name: Prepare site files
         run: |
-          rm -rf .git data .grok docs AGENTS.md
-          # Behold .nojekyll så Pages ikke kører Jekyll
-          test -f .nojekyll || touch .nojekyll
+          mkdir -p _site
+          cp index.html style.css README.md _site/
+          touch _site/.nojekyll
+          cp -r js assets _site/
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: .
-
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./_site
+          force_orphan: true
+          commit_message: "Deploy FlowTransport site from main"
