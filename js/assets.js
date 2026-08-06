@@ -43,7 +43,7 @@ let tileImgs = {};
 export async function loadGameAssets() {
   const placeKeys = Object.keys(PLACE_SRC);
   const vehKeys = Object.keys(VEHICLE_SRC);
-  const tiles = ['grass', 'grass2', 'water', 'forest', 'asphalt'];
+  const tiles = ['grass', 'grass2', 'grass3', 'dirt', 'dirt2', 'water', 'forest', 'asphalt'];
 
   await Promise.all([
     ...placeKeys.map(async (k) => {

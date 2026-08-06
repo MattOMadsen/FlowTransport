@@ -1,6 +1,6 @@
 /** 2.5D cozy renderer – DPR-safe camera, scenery */
 
-import { worldToIso, isoToWorld, depthKey } from './iso.js';
+import { worldToIso, isoToWorld, depthKey, ISO_A, ISO_B } from './iso.js';
 import { getPlaceImage, getVehicleImage, getTileImage } from './assets.js';
 
 export class Renderer {
@@ -28,13 +28,29 @@ export class Renderer {
 
   clear(camera) {
     const ctx = this.ctx;
-    // Background in CSS pixels
+    // Background in CSS pixels – soft cinematic sky (less flat “2010 flash”)
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     const g = ctx.createLinearGradient(0, 0, 0, this.cssH);
-    g.addColorStop(0, '#b9d9f0');
-    g.addColorStop(0.35, '#c5e0c8');
-    g.addColorStop(1, '#8fbf7a');
+    g.addColorStop(0, '#9ec9ef');
+    g.addColorStop(0.28, '#c5dff0');
+    g.addColorStop(0.55, '#d4e8c8');
+    g.addColorStop(0.82, '#a8c98a');
+    g.addColorStop(1, '#7aab68');
     ctx.fillStyle = g;
+    ctx.fillRect(0, 0, this.cssW, this.cssH);
+    // Soft sun glow (top-right)
+    const sun = ctx.createRadialGradient(
+      this.cssW * 0.78,
+      this.cssH * 0.12,
+      8,
+      this.cssW * 0.78,
+      this.cssH * 0.12,
+      Math.max(this.cssW, this.cssH) * 0.55
+    );
+    sun.addColorStop(0, 'rgba(255, 248, 220, 0.45)');
+    sun.addColorStop(0.35, 'rgba(255, 236, 190, 0.12)');
+    sun.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = sun;
     ctx.fillRect(0, 0, this.cssW, this.cssH);
     // World: CSS camera * dpr (must match screenToWorld)
     camera.apply(ctx, this.dpr);
@@ -48,28 +64,59 @@ export class Renderer {
       worldToIso(worldW, worldH),
       worldToIso(0, worldH)
     ];
+    const minY = Math.min(...corners.map((c) => c.y));
+    const maxY = Math.max(...corners.map((c) => c.y));
+    const minX = Math.min(...corners.map((c) => c.x));
+    const maxX = Math.max(...corners.map((c) => c.x));
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+
+    // Soft drop-shadow under the island (depth without hard outline)
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(corners[0].x + 10, corners[0].y + 18);
+    for (let i = 1; i < 4; i++) ctx.lineTo(corners[i].x + 10, corners[i].y + 18);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(15, 40, 25, 0.22)';
+    ctx.fill();
+    ctx.restore();
+
     ctx.beginPath();
     ctx.moveTo(corners[0].x, corners[0].y);
     for (let i = 1; i < 4; i++) ctx.lineTo(corners[i].x, corners[i].y);
     ctx.closePath();
 
-    ctx.fillStyle = '#6fad6c';
+    // Base underpaint (visible if tiles missing)
+    const grassGrad = ctx.createLinearGradient(cx, minY, cx, maxY);
+    grassGrad.addColorStop(0, '#8bc98a');
+    grassGrad.addColorStop(0.45, '#6db56a');
+    grassGrad.addColorStop(1, '#5a9f58');
+    ctx.fillStyle = grassGrad;
     ctx.fill();
 
-    // Soft field strips inside board
+    // Textured grass/dirt in world-space (iso transform) – tiles were loaded but unused
     ctx.save();
     ctx.clip();
-    ctx.globalAlpha = 0.22;
-    const minY = Math.min(...corners.map((c) => c.y));
-    const maxY = Math.max(...corners.map((c) => c.y));
-    const minX = Math.min(...corners.map((c) => c.x));
-    const maxX = Math.max(...corners.map((c) => c.x));
-    for (let i = 0; i < 18; i++) {
-      const y = minY + ((maxY - minY) * i) / 18;
-      ctx.fillStyle = i % 2 ? '#5f9a5c' : '#7fbe7a';
-      ctx.fillRect(minX - 20, y, maxX - minX + 40, (maxY - minY) / 18 + 1);
+    this._fillWorldTexture(worldW, worldH, 'grass', 0.92, 0.5);
+    this._fillWorldTexture(worldW, worldH, 'grass2', 0.28, 0.62);
+
+    // Soft field strips (subtle, over texture)
+    ctx.globalAlpha = 0.1;
+    const band = (maxY - minY) / 22;
+    for (let i = 0; i < 22; i++) {
+      const y = minY + band * i;
+      ctx.fillStyle = i % 2 ? '#4d8f4a' : '#9ad498';
+      ctx.fillRect(minX - 24, y, maxX - minX + 48, band + 1);
     }
     ctx.globalAlpha = 1;
+
+    // Subtle warm light wash across board
+    const wash = ctx.createRadialGradient(cx - 40, minY + 30, 20, cx, cy, (maxX - minX) * 0.65);
+    wash.addColorStop(0, 'rgba(255, 255, 240, 0.14)');
+    wash.addColorStop(0.55, 'rgba(255, 255, 255, 0.03)');
+    wash.addColorStop(1, 'rgba(20, 60, 30, 0.1)');
+    ctx.fillStyle = wash;
+    ctx.fillRect(minX - 30, minY - 30, maxX - minX + 60, maxY - minY + 60);
 
     // Hills
     if (scenery?.hills) {
@@ -77,20 +124,21 @@ export class Renderer {
         const iso = worldToIso(h.x, h.y);
         ctx.beginPath();
         ctx.ellipse(iso.x, iso.y, h.r * 0.7, h.r * 0.35, 0, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255,255,255,${h.shade})`;
+        ctx.fillStyle = `rgba(255,255,255,${Math.min(0.35, (h.shade || 0.12) * 1.15)})`;
         ctx.fill();
       }
     }
 
-    // Forest floor patches
+    // Forest floor patches (+ forest tile if loaded)
     if (scenery?.forests) {
       for (const f of scenery.forests) {
         const iso = worldToIso(f.x, f.y);
         ctx.beginPath();
         ctx.ellipse(iso.x, iso.y, f.r * 0.75, f.r * 0.38, 0, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(34,90,40,0.28)';
+        ctx.fillStyle = 'rgba(28, 72, 36, 0.28)';
         ctx.fill();
       }
+      this._stampForestPatches(scenery.forests);
     }
 
     // Lakes
@@ -101,13 +149,69 @@ export class Renderer {
     }
     ctx.restore();
 
-    ctx.strokeStyle = 'rgba(30,70,40,0.3)';
-    ctx.lineWidth = 4;
+    // Rim: soft light edge + thin dark lip (no thick cartoon stroke)
     ctx.beginPath();
     ctx.moveTo(corners[0].x, corners[0].y);
     for (let i = 1; i < 4; i++) ctx.lineTo(corners[i].x, corners[i].y);
     ctx.closePath();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+    ctx.lineWidth = 5;
     ctx.stroke();
+    ctx.strokeStyle = 'rgba(22, 55, 32, 0.35)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  /**
+   * Fill current clip with a tile pattern mapped from world → iso.
+   * @param {number} worldW
+   * @param {number} worldH
+   * @param {string} tileName
+   * @param {number} alpha
+   * @param {number} scale pattern scale (smaller = denser)
+   */
+  _fillWorldTexture(worldW, worldH, tileName, alpha = 1, scale = 0.55) {
+    const ctx = this.ctx;
+    const img = getTileImage(tileName);
+    if (!img || !img.complete || !img.naturalWidth) return;
+    let pat;
+    try {
+      pat = ctx.createPattern(img, 'repeat');
+    } catch {
+      return;
+    }
+    if (!pat) return;
+    if (typeof pat.setTransform === 'function') {
+      const m = new DOMMatrix();
+      m.scaleSelf(scale, scale);
+      pat.setTransform(m);
+    }
+    ctx.save();
+    // Screen = world * [[A,-A],[B,B]]  →  ctx.transform(a,b,c,d,e,f)
+    ctx.transform(ISO_A, ISO_B, -ISO_A, ISO_B, 0, 0);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = pat;
+    ctx.fillRect(-2, -2, worldW + 4, worldH + 4);
+    ctx.restore();
+  }
+
+  _stampForestPatches(forests) {
+    const ctx = this.ctx;
+    const img = getTileImage('forest');
+    if (!img || !img.complete || !img.naturalWidth) return;
+    for (const f of forests) {
+      const iso = worldToIso(f.x, f.y);
+      const rw = (f.r || 40) * 1.2;
+      const rh = (f.r || 40) * 0.55;
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(iso.x, iso.y, rw * 0.55, rh * 0.85, 0, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.globalAlpha = 0.45;
+      const s = Math.max(rw, rh) * 1.4;
+      ctx.drawImage(img, iso.x - s / 2, iso.y - s / 2, s, s);
+      ctx.restore();
+    }
   }
 
   drawLake(L) {
@@ -121,18 +225,19 @@ export class Renderer {
     ctx.beginPath();
     ctx.ellipse(0, 0, L.rx * 0.85, L.ry * 0.95, 0, 0, Math.PI * 2);
     const grad = ctx.createRadialGradient(0, 0, 4, 0, 0, L.rx);
-    grad.addColorStop(0, '#7ec8e8');
-    grad.addColorStop(0.55, '#3a9bc5');
-    grad.addColorStop(1, '#2a7a9e');
+    grad.addColorStop(0, '#a8dff5');
+    grad.addColorStop(0.4, '#4eb3d9');
+    grad.addColorStop(0.75, '#2f8cb5');
+    grad.addColorStop(1, '#1f6a8a');
     ctx.fillStyle = grad;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.42)';
+    ctx.lineWidth = 2.5;
     ctx.stroke();
     // Shine
     ctx.beginPath();
     ctx.ellipse(-L.rx * 0.2, -L.ry * 0.15, L.rx * 0.35, L.ry * 0.2, -0.4, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fillStyle = 'rgba(255,255,255,0.28)';
     ctx.fill();
     ctx.restore();
   }
@@ -141,17 +246,17 @@ export class Renderer {
     const ctx = this.ctx;
     const iso = worldToIso(t.x, t.y);
     const s = (t.s || 1) * 14;
-    // Shadow
+    // Soft contact shadow
     ctx.beginPath();
-    ctx.ellipse(iso.x, iso.y + 2, s * 0.45, s * 0.18, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.ellipse(iso.x, iso.y + 2, s * 0.48, s * 0.16, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(12, 40, 20, 0.2)';
     ctx.fill();
     // Trunk
-    ctx.fillStyle = '#6b4423';
+    ctx.fillStyle = '#5c4030';
     ctx.fillRect(iso.x - s * 0.08, iso.y - s * 0.35, s * 0.16, s * 0.4);
-    // Canopy
-    const g = t.tint > 0.5 ? '#3d8c40' : '#2f7a38';
-    const g2 = t.tint > 0.5 ? '#5cb85c' : '#4a9c4f';
+    // Canopy – slightly richer greens
+    const g = t.tint > 0.5 ? '#3a8f4a' : '#2a7340';
+    const g2 = t.tint > 0.5 ? '#62c26a' : '#4aad5c';
     ctx.beginPath();
     ctx.arc(iso.x, iso.y - s * 0.55, s * 0.42, 0, Math.PI * 2);
     ctx.fillStyle = g;
@@ -160,6 +265,11 @@ export class Renderer {
     ctx.arc(iso.x - s * 0.2, iso.y - s * 0.4, s * 0.32, 0, Math.PI * 2);
     ctx.arc(iso.x + s * 0.22, iso.y - s * 0.42, s * 0.3, 0, Math.PI * 2);
     ctx.fillStyle = g2;
+    ctx.fill();
+    // Specular speck on canopy
+    ctx.beginPath();
+    ctx.arc(iso.x - s * 0.08, iso.y - s * 0.62, s * 0.1, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
     ctx.fill();
   }
 
@@ -172,38 +282,83 @@ export class Renderer {
     const highway = lanes >= 3;
     const width = opts.width || (highway ? 24 : dual ? 18 : 14);
 
+    // Soft layered shadow
     ctx.beginPath();
-    ctx.moveTo(isoPts[0].x + 2, isoPts[0].y + 3);
-    for (let i = 1; i < isoPts.length; i++) ctx.lineTo(isoPts[i].x + 2, isoPts[i].y + 3);
-    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-    ctx.lineWidth = width + 4;
+    ctx.moveTo(isoPts[0].x + 1.5, isoPts[0].y + 4);
+    for (let i = 1; i < isoPts.length; i++) ctx.lineTo(isoPts[i].x + 1.5, isoPts[i].y + 4);
+    ctx.strokeStyle = 'rgba(15, 25, 20, 0.22)';
+    ctx.lineWidth = width + 6;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.stroke();
 
+    // Outer curb
     ctx.beginPath();
     ctx.moveTo(isoPts[0].x, isoPts[0].y);
     for (let i = 1; i < isoPts.length; i++) ctx.lineTo(isoPts[i].x, isoPts[i].y);
-    ctx.strokeStyle = highway ? '#1e3a5f' : dual ? '#57534e' : '#6b7280';
-    ctx.lineWidth = width + 5;
+    ctx.strokeStyle = highway ? '#0f2744' : dual ? '#3f3a36' : '#4a5560';
+    ctx.lineWidth = width + 4.5;
     ctx.stroke();
 
     const bridge = !!opts.bridge;
-    ctx.strokeStyle = opts.preview
-      ? 'rgba(55,65,81,0.55)'
-      : bridge
-        ? '#64748b'
-        : highway
-          ? '#1e293b'
-          : dual
-            ? '#374151'
-            : '#4b5563';
+    // Asphalt surface (texture when available)
     ctx.lineWidth = width;
-    ctx.stroke();
+    if (opts.preview) {
+      ctx.strokeStyle = 'rgba(71, 85, 105, 0.5)';
+      ctx.stroke();
+    } else {
+      const asphalt = getTileImage('asphalt');
+      let usedTex = false;
+      if (asphalt && asphalt.complete && asphalt.naturalWidth) {
+        try {
+          const pat = ctx.createPattern(asphalt, 'repeat');
+          if (pat) {
+            if (typeof pat.setTransform === 'function') {
+              const m = new DOMMatrix();
+              m.scaleSelf(0.45, 0.45);
+              pat.setTransform(m);
+            }
+            ctx.strokeStyle = pat;
+            ctx.stroke();
+            usedTex = true;
+            // Darken / grade by road class
+            ctx.strokeStyle = highway
+              ? 'rgba(15, 30, 55, 0.45)'
+              : dual
+                ? 'rgba(20, 24, 32, 0.32)'
+                : bridge
+                  ? 'rgba(40, 50, 65, 0.28)'
+                  : 'rgba(25, 30, 38, 0.22)';
+            ctx.stroke();
+          }
+        } catch {
+          usedTex = false;
+        }
+      }
+      if (!usedTex) {
+        ctx.strokeStyle = bridge
+          ? '#6b7c8f'
+          : highway
+            ? '#1a2740'
+            : dual
+              ? '#2f3540'
+              : '#3d4450';
+        ctx.stroke();
+      }
+    }
+
+    // Subtle top highlight edge
+    if (!opts.preview) {
+      ctx.save();
+      ctx.globalAlpha = 0.2;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(1, width * 0.12);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     if (bridge && !opts.preview) {
-      // Bridge rails
-      ctx.strokeStyle = 'rgba(226,232,240,0.7)';
+      ctx.strokeStyle = 'rgba(226,232,240,0.75)';
       ctx.lineWidth = 2;
       ctx.stroke();
     }
@@ -211,29 +366,27 @@ export class Renderer {
     if (!opts.preview) {
       ctx.save();
       if (highway) {
-        // Motorvej: lys midterlinje + kant
         ctx.setLineDash([14, 10]);
-        ctx.strokeStyle = 'rgba(255,255,255,0.92)';
-        ctx.lineWidth = 2.4;
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-      } else if (dual) {
-        // Dobbelt midterstribe = 2-spor
-        ctx.setLineDash([]);
-        ctx.strokeStyle = 'rgba(253, 224, 71, 0.95)';
+        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
         ctx.lineWidth = 2.2;
         ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+        ctx.lineWidth = 1.1;
+        ctx.stroke();
+      } else if (dual) {
+        ctx.setLineDash([]);
+        ctx.strokeStyle = 'rgba(250, 204, 21, 0.9)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
         ctx.setLineDash([6, 8]);
-        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = 'rgba(255,255,255,0.88)';
+        ctx.lineWidth = 1.15;
         ctx.stroke();
       } else {
-        ctx.setLineDash(bridge ? [4, 8] : [8, 10]);
-        ctx.strokeStyle = bridge ? 'rgba(148,163,184,0.9)' : 'rgba(251,191,36,0.75)';
-        ctx.lineWidth = 1.5;
+        ctx.setLineDash(bridge ? [4, 8] : [9, 11]);
+        ctx.strokeStyle = bridge ? 'rgba(203,213,225,0.9)' : 'rgba(253, 224, 71, 0.72)';
+        ctx.lineWidth = 1.4;
         ctx.stroke();
       }
       ctx.restore();
@@ -246,14 +399,15 @@ export class Renderer {
     const img = getPlaceImage(place.type, place.variant || 0);
     const base = Math.max(36, place.r * 1.15);
 
+    // Soft ground contact + light pad
     ctx.beginPath();
-    ctx.ellipse(iso.x, iso.y + 6, base * 0.85, base * 0.32, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.ellipse(iso.x, iso.y + 7, base * 0.88, base * 0.3, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(12, 30, 20, 0.2)';
     ctx.fill();
 
     ctx.beginPath();
-    ctx.ellipse(iso.x, iso.y + 2, base * 0.72, base * 0.28, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.ellipse(iso.x, iso.y + 2, base * 0.74, base * 0.28, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
     ctx.fill();
 
     if (img && img.complete && img.naturalWidth) {
@@ -267,13 +421,28 @@ export class Renderer {
       ctx.fill();
     }
 
-    ctx.font = '600 13px system-ui, sans-serif';
+    // Name pill (modern UI chip under place)
+    const name = place.name || '';
+    ctx.font = '600 12px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'center';
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
-    ctx.strokeText(place.name, iso.x, iso.y + base * 0.5 + 12);
-    ctx.fillStyle = 'rgba(15,23,42,0.9)';
-    ctx.fillText(place.name, iso.x, iso.y + base * 0.5 + 12);
+    ctx.textBaseline = 'middle';
+    const tw = ctx.measureText(name).width;
+    const px = 10;
+    const py = 5;
+    const pillW = tw + px * 2;
+    const pillH = 18;
+    const pillX = iso.x - pillW / 2;
+    const pillY = iso.y + base * 0.48 + 4;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(pillX, pillY, pillW, pillH, 9);
+    } else {
+      ctx.rect(pillX, pillY, pillW, pillH);
+    }
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+    ctx.fill();
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillText(name, iso.x, pillY + pillH / 2 + 0.5);
 
     // Building badges
     const b = place.buildings;
@@ -282,7 +451,7 @@ export class Renderer {
       if (b.station) icons.push('🚉');
       if (b.warehouse) icons.push('🏭');
       if (b.depot) icons.push('🚏');
-      ctx.font = '12px serif';
+      ctx.font = '12px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(icons.join(''), iso.x, iso.y - base * 0.9);
     }
@@ -292,8 +461,8 @@ export class Renderer {
     const ctx = this.ctx;
     const iso = worldToIso(v.x, v.y);
     ctx.beginPath();
-    ctx.ellipse(iso.x, iso.y + 4, 10, 5, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.ellipse(iso.x, iso.y + 4, 11, 5, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(12, 25, 18, 0.28)';
     ctx.fill();
 
     const img = getVehicleImage(v.sprite || v.classId);
@@ -306,7 +475,12 @@ export class Renderer {
     ctx.rotate(ang + Math.PI / 2);
     if (img && img.complete && img.naturalWidth) {
       const s =
-        v.classId === 'bus' ? 30 : v.classId === 'van' ? 24 : v.kind === 'truck' ? 28 : 22;
+        v.classId === 'bus' ? 34 : v.classId === 'van' ? 28 : v.kind === 'truck' ? 32 : 26;
+      // Soft under-glow so sprites read on textured grass
+      ctx.fillStyle = 'rgba(255,255,255,0.12)';
+      ctx.beginPath();
+      ctx.ellipse(0, 2, s * 0.38, s * 0.18, 0, 0, Math.PI * 2);
+      ctx.fill();
       ctx.drawImage(img, -s / 2, -s / 2, s, s);
     } else {
       ctx.fillStyle = v.color || '#3b82f6';
@@ -315,9 +489,9 @@ export class Renderer {
     ctx.restore();
 
     if (v.cargo > 0) {
-      ctx.font = '12px serif';
+      ctx.font = '13px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(v.kind === 'truck' ? '📦' : '👤', iso.x, iso.y - 16);
+      ctx.fillText(v.kind === 'truck' ? '📦' : '👤', iso.x, iso.y - 18);
     }
   }
 
@@ -464,6 +638,21 @@ export class Renderer {
     if (highlight) this.drawJobHighlight(highlight);
 
     this.drawMinimap(game);
+    this.drawScreenVignette();
+  }
+
+  /** Soft screen-space vignette – lille “premium” polish uden gameplay-ændring */
+  drawScreenVignette() {
+    const ctx = this.ctx;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    const w = this.cssW;
+    const h = this.cssH;
+    const v = ctx.createRadialGradient(w * 0.5, h * 0.45, Math.min(w, h) * 0.28, w * 0.5, h * 0.5, Math.max(w, h) * 0.72);
+    v.addColorStop(0, 'rgba(0,0,0,0)');
+    v.addColorStop(0.65, 'rgba(0,0,0,0)');
+    v.addColorStop(1, 'rgba(12, 28, 22, 0.22)');
+    ctx.fillStyle = v;
+    ctx.fillRect(0, 0, w, h);
   }
 
   /**
