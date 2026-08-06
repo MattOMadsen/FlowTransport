@@ -7,7 +7,7 @@ export const TUTORIAL_STEPS = [
     id: 'road',
     title: '1 · Tegn en vej',
     body: 'Træk med én finger fra by til by. Snap-ringen viser når enden fanger. Vej koster penge, men låser op for jobs.',
-    hint: '✏️ Træk · 🛣️ 2-spor · 🗑️ slet'
+    hint: '✏️ Træk · 🛣️ 2-spor/motorvej · 🗑️ slet'
   },
   {
     id: 'buy',

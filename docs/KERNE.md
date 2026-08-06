@@ -67,6 +67,7 @@ Regler:
 - Levering giver reward
 - Køb bil i by-shop (tap by)
 - Undo: slet sidste vej med delvis refund
+- Vejklasser: alm (1×) → 2-spor (~1,28×) → motorvej (~1,72× + bilbonus for car/van)
 
 ## Progression (MVP)
 

@@ -169,7 +169,8 @@ export class Renderer {
     const isoPts = points.map((p) => worldToIso(p.x, p.y));
     const lanes = opts.lanes || 1;
     const dual = lanes >= 2;
-    const width = opts.width || (dual ? 18 : 14);
+    const highway = lanes >= 3;
+    const width = opts.width || (highway ? 24 : dual ? 18 : 14);
 
     ctx.beginPath();
     ctx.moveTo(isoPts[0].x + 2, isoPts[0].y + 3);
@@ -183,7 +184,7 @@ export class Renderer {
     ctx.beginPath();
     ctx.moveTo(isoPts[0].x, isoPts[0].y);
     for (let i = 1; i < isoPts.length; i++) ctx.lineTo(isoPts[i].x, isoPts[i].y);
-    ctx.strokeStyle = dual ? '#57534e' : '#6b7280';
+    ctx.strokeStyle = highway ? '#1e3a5f' : dual ? '#57534e' : '#6b7280';
     ctx.lineWidth = width + 5;
     ctx.stroke();
 
@@ -192,9 +193,11 @@ export class Renderer {
       ? 'rgba(55,65,81,0.55)'
       : bridge
         ? '#64748b'
-        : dual
-          ? '#374151'
-          : '#4b5563';
+        : highway
+          ? '#1e293b'
+          : dual
+            ? '#374151'
+            : '#4b5563';
     ctx.lineWidth = width;
     ctx.stroke();
 
@@ -207,7 +210,17 @@ export class Renderer {
 
     if (!opts.preview) {
       ctx.save();
-      if (dual) {
+      if (highway) {
+        // Motorvej: lys midterlinje + kant
+        ctx.setLineDash([14, 10]);
+        ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+        ctx.lineWidth = 2.4;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      } else if (dual) {
         // Dobbelt midterstribe = 2-spor
         ctx.setLineDash([]);
         ctx.strokeStyle = 'rgba(253, 224, 71, 0.95)';
@@ -402,7 +415,7 @@ export class Renderer {
     for (const road of game.roads) {
       const lanes = road.lanes || 1;
       this.drawRoad(road.points, {
-        width: 12 + lanes * 3,
+        width: 12 + Math.min(lanes, 3) * 3 + (lanes >= 3 ? 2 : 0),
         lanes,
         bridge: !!road.isBridge
       });
@@ -505,8 +518,11 @@ export class Renderer {
         const p = toMap(pts[i].x, pts[i].y);
         ctx.lineTo(p.x, p.y);
       }
-      ctx.strokeStyle = (road.lanes || 1) >= 2 ? '#fbbf24' : '#94a3b8';
-      ctx.lineWidth = (road.lanes || 1) >= 2 ? 2.2 : 1.4;
+      {
+        const L = road.lanes || 1;
+        ctx.strokeStyle = L >= 3 ? '#38bdf8' : L >= 2 ? '#fbbf24' : '#94a3b8';
+        ctx.lineWidth = L >= 3 ? 2.6 : L >= 2 ? 2.2 : 1.4;
+      }
       ctx.lineCap = 'round';
       ctx.stroke();
     }

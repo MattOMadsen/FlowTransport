@@ -86,6 +86,45 @@ export function speedForClass(classId, upgradeRank = 0) {
   return Math.round(c.speed * (1 + rank * 0.03));
 }
 
+/** Vejklasser: 1 alm · 2 2-spor · 3 motorvej */
+export const ROAD_LANE_SPEED = {
+  1: 1,
+  2: 1.28,
+  3: 1.72
+};
+
+/**
+ * Hurtige personbiler/varebiler udnytter motorvej bedst;
+ * bus/lastbil får stadig base-motorvejsfart men mindre ekstra bonus.
+ */
+export const HIGHWAY_CLASS_MUL = {
+  car: 1.12,
+  van: 1.08,
+  bus: 0.98,
+  truck: 0.94
+};
+
+/**
+ * Effektiv farts-multiplikator for bil på vej med `lanes`.
+ * @param {string} classId
+ * @param {number} lanes
+ */
+export function roadSpeedMul(classId, lanes = 1) {
+  const L = Math.max(1, Math.min(3, lanes | 0));
+  let m = ROAD_LANE_SPEED[L] ?? 1;
+  if (L >= 3) {
+    m *= HIGHWAY_CLASS_MUL[classId] || 1;
+  }
+  return m;
+}
+
+export function roadLaneLabel(lanes = 1) {
+  const L = lanes | 0;
+  if (L >= 3) return 'Motorvej';
+  if (L >= 2) return '2-spor';
+  return 'Alm. vej';
+}
+
 export function upgradePrice(upgradeRank = 0, classId = 'car') {
   const rank = Math.max(0, upgradeRank | 0);
   const c = getClass(classId);

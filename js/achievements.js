@@ -5,6 +5,7 @@ export const ACHIEVEMENTS = [
   { id: 'first_delivery', icon: '📦', label: 'Første levering', desc: 'Lever én enhed', xp: 25 },
   { id: 'fleet_3', icon: '🚗', label: 'Lille flåde', desc: 'Hav 3 biler', xp: 30 },
   { id: 'dual_lane', icon: '🛤️', label: '2-spor', desc: 'Opgrader en vej til 2-spor', xp: 25 },
+  { id: 'highway', icon: '🏎️', label: 'Motorvej', desc: 'Opgrader en vej til motorvej', xp: 35 },
   { id: 'upgrade_car', icon: '⬆', label: 'Tune', desc: 'Opgrader en bil', xp: 20 },
   { id: 'sell_car', icon: '💰', label: 'Salg', desc: 'Sælg en bil', xp: 15 },
   { id: 'express', icon: '⚡', label: 'Ekspres', desc: 'Fuldfør et ekspres-job', xp: 30 },

@@ -3,7 +3,7 @@
  * States: park | to_pickup | loading | to_dropoff | unload
  */
 
-import { VEHICLE_CLASSES, cargoCapacity, speedForClass } from './fleet.js';
+import { VEHICLE_CLASSES, cargoCapacity, speedForClass, roadSpeedMul } from './fleet.js';
 import { pointOnPoly } from './graph.js';
 
 let _vid = 1;
@@ -154,8 +154,8 @@ export class Vehicle {
 
     const pts = step.reverse ? [...road.points].reverse() : road.points;
     const len = edge.length || 1;
-    // 2-spor (lanes ≥ 2) → højere fart
-    const laneMul = (road.lanes || 1) >= 2 ? 1.28 : 1;
+    // Alm / 2-spor / motorvej + bilklasse-bonus på motorvej
+    const laneMul = roadSpeedMul(this.classId, road.lanes || 1);
     this.t += (this.speed * laneMul * dt) / len;
 
     if (this.t >= 0.99) {

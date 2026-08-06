@@ -20,7 +20,8 @@ import {
   buyPrice,
   upgradePrice,
   canUpgrade,
-  sellPriceForClass
+  sellPriceForClass,
+  roadLaneLabel
 } from './fleet.js';
 import {
   getScenario,
@@ -61,12 +62,13 @@ const ROAD_COST_PER_PX = 0.42;
 const ROAD_BASE_COST = 18;
 const BRIDGE_MULT = 1.85;
 const SNAP_R = 40;
-/** 1 = normal · 2 = 2-spor (hurtigere) */
-const MAX_ROAD_LANES = 2;
+/** 1 = alm · 2 = 2-spor · 3 = motorvej */
+const MAX_ROAD_LANES = 3;
 const ROAD_UPGRADE_BASE = 40;
 const ROAD_UPGRADE_PER_PX = 0.22;
-/** Multiplikator på bil-fart på 2-spor */
-export const LANE_SPEED_MUL = 1.28;
+/** Motorvej (2 → 3) dyrere pr. længde */
+const HIGHWAY_UPGRADE_BASE = 75;
+const HIGHWAY_UPGRADE_PER_PX = 0.38;
 
 export class Game {
   constructor(canvas, ui) {
@@ -649,38 +651,50 @@ export class Game {
     this.removeRoad(best.id, true);
   }
 
-  /** Cost to upgrade road to 2-spor */
-  upgradeRoadCost(road) {
+  /**
+   * Pris for næste vejniveau (1→2 2-spor, 2→3 motorvej).
+   * @param {object} road
+   * @param {number} [fromLanes]
+   */
+  upgradeRoadCost(road, fromLanes) {
     if (!road) return 0;
     const len = polyLength(road.points) || 0;
+    const from = fromLanes != null ? fromLanes | 0 : road.lanes || 1;
+    if (from >= 2) {
+      return Math.max(90, Math.round(HIGHWAY_UPGRADE_BASE + len * HIGHWAY_UPGRADE_PER_PX));
+    }
     return Math.max(45, Math.round(ROAD_UPGRADE_BASE + len * ROAD_UPGRADE_PER_PX));
   }
 
-  /** Upgrade tool: tap road → 2-spor (hurtigere + bredere). */
+  /** Upgrade tool: tap → 2-spor, tap igen → motorvej (hurtigere + bredere). */
   upgradeAt(wx, wy) {
     const road = this.findRoadNear(wx, wy, 40);
     if (!road) {
       playError();
-      this.toast('Tryk på en vej for 2-spor');
+      this.toast('Tryk på en vej: 2-spor → motorvej');
       return;
     }
     const lanes = road.lanes || 1;
     if (lanes >= MAX_ROAD_LANES) {
-      this.toast('Allerede 2-spor');
+      this.toast('Allerede motorvej 🏎️');
       return;
     }
-    const cost = this.upgradeRoadCost(road);
+    const next = lanes + 1;
+    const cost = this.upgradeRoadCost(road, lanes);
     if (this.money < cost) {
       playError();
       this.toast(`Ikke nok penge (mangler ${cost - this.money} kr)`);
       return;
     }
     this.money -= cost;
-    road.lanes = MAX_ROAD_LANES;
+    road.lanes = next;
     road.paidCost = (road.paidCost || 0) + cost;
     playRoad();
-    this.unlockAch('dual_lane');
-    this.toast(`2-spor opgraderet (−${cost} kr) 🛣️`);
+    if (next === 2) this.unlockAch('dual_lane');
+    if (next >= 3) this.unlockAch('highway');
+    const label = roadLaneLabel(next);
+    const icon = next >= 3 ? '🏎️' : '🛣️';
+    this.toast(`${label} (−${cost} kr) ${icon}`);
     bumpDaily(this.daily, 'roads', 1);
     this.refreshDailyUi();
     this.persistSession();
