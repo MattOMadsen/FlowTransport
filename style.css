@@ -679,6 +679,17 @@ html, body {
   color: var(--muted);
 }
 
+.global-item.hired {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.hire-summary {
+  grid-column: 1 / -1;
+  margin: 0 0 0.15rem;
+  font-size: 0.85rem;
+}
+
 .shop-item {
   border: 2px solid #e7e5e4;
   background: #fff;
