@@ -71,14 +71,16 @@ Regler:
 ## Progression (MVP)
 
 - XP + level i localStorage
-- 1–2 baner med 3 stjerner (leverancer / forbind alle)
+- 4 baner med 3 stjerner (leverancer / forbind alle / penge)
 - Map-select i startmenu
+- **Lås:** intro altid åben; næste bane ved stjerner på forrige **eller** level  
+  (dal: 1★ intro / L2 · kyst: 2★ dal / L3 · øer: 2★ kyst / L4)
 
 ## Senere (efter kerne er rolig)
 
 1. Envejs + trafiklys (på edge-flags)
 2. Kø / density (kapacitet pr. edge)
-3. Flere baner, shop-buffs
+3. Flere baner / balance
 4. Simple bots
 5. PWA
 

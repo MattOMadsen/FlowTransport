@@ -1,5 +1,11 @@
 import { Game } from './game.js';
-import { SCENARIOS } from './scenarios.js';
+import {
+  SCENARIOS,
+  isScenarioUnlocked,
+  unlockHint,
+  getScenario,
+  totalStars
+} from './scenarios.js';
 import { loadMeta, getScenarioStars } from './meta.js';
 import {
   TUTORIAL_STEPS,
@@ -109,20 +115,24 @@ function renderMenu() {
   const list = document.getElementById('scenario-list');
   list.innerHTML = SCENARIOS.map((s) => {
     const stars = getScenarioStars(meta, s.id);
-    const locked = meta.level < s.unlockLevel;
+    const locked = !isScenarioUnlocked(s, meta);
+    const hint = locked ? unlockHint(s, meta) : '';
     return `
-      <button class="scenario-card" data-id="${s.id}" ${locked ? 'disabled' : ''}>
-        <strong>${s.name}</strong>
-        <span class="blurb">${s.blurb}</span>
-        <span class="stars">${locked ? `🔒 Lvl ${s.unlockLevel}` : '⭐'.repeat(stars) + '☆'.repeat(3 - stars)}</span>
-        <span class="new-tag">Nyt spil</span>
+      <button class="scenario-card${locked ? ' locked' : ''}" data-id="${s.id}" ${locked ? 'disabled' : ''} title="${hint}">
+        <strong>${locked ? '🔒 ' : ''}${s.name}</strong>
+        <span class="blurb">${locked ? hint : s.blurb}</span>
+        <span class="stars">${locked ? hint : '⭐'.repeat(stars) + '☆'.repeat(3 - stars)}</span>
+        ${locked ? '' : '<span class="new-tag">Nyt spil</span>'}
       </button>`;
   }).join('');
   list.querySelectorAll('.scenario-card').forEach((btn) => {
-    btn.addEventListener('click', () => startNewGame(btn.dataset.id));
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      startNewGame(btn.dataset.id);
+    });
   });
   document.getElementById('meta-level').textContent = `Level ${meta.level}`;
-  document.getElementById('meta-xp').textContent = `${meta.xp} XP`;
+  document.getElementById('meta-xp').textContent = `${meta.xp} XP · ${totalStars(meta)}★`;
 
   const disk = game.hasDiskSession?.() || (game.hasActiveSession && game.scenario);
   if (disk || (game.hasActiveSession && game.scenario)) {
@@ -137,6 +147,12 @@ function renderMenu() {
 }
 
 async function startNewGame(id) {
+  const meta = loadMeta();
+  const sc = getScenario(id);
+  if (!isScenarioUnlocked(sc, meta)) {
+    alert(unlockHint(sc, meta) || 'Banen er låst');
+    return;
+  }
   if (game.hasActiveSession) {
     const ok = confirm(
       'Starte et nyt spil?\n\nDet nuværende spil på kortet slettes (stjerner/level huskes).'

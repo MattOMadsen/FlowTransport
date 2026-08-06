@@ -22,7 +22,17 @@ import {
   canUpgrade,
   sellPriceForClass
 } from './fleet.js';
-import { getScenario, evaluateStars, goalLabel, nextScenarioId, SCENARIOS } from './scenarios.js';
+import {
+  getScenario,
+  evaluateStars,
+  goalLabel,
+  nextScenarioId,
+  nextUnlockedScenarioId,
+  isScenarioUnlocked,
+  unlockHint,
+  newlyUnlockedScenarios,
+  SCENARIOS
+} from './scenarios.js';
 import { loadMeta, saveMeta, addXp, setScenarioStars, XP_REWARDS } from './meta.js';
 import {
   loadDaily,
@@ -149,6 +159,12 @@ export class Game {
 
   /** Full new game on a scenario (from menu). */
   startScenario(id) {
+    this.meta = loadMeta();
+    const sc = getScenario(id);
+    if (!isScenarioUnlocked(sc, this.meta)) {
+      this.toast(unlockHint(sc, this.meta) || 'Banen er låst');
+      return;
+    }
     clearSession();
     this._bootWorld(id, null);
     this.toast('Nyt spil – tegn veje mellem byerne 🛣️');
@@ -1408,10 +1424,19 @@ export class Game {
     });
     const prev = this.meta.stars[this.scenario.id] || 0;
     if (stars > prev) {
+      const prevMeta = {
+        level: this.meta.level,
+        stars: { ...this.meta.stars }
+      };
       setScenarioStars(this.meta, this.scenario.id, stars);
       addXp(this.meta, XP_REWARDS.star * (stars - prev));
       this.toast(`${'⭐'.repeat(stars)} Nye stjerner!`);
       if (stars >= 1) this.unlockAch('star_1');
+      const unlocked = newlyUnlockedScenarios(prevMeta, this.meta);
+      if (unlocked.length) {
+        const names = unlocked.map((u) => u.name).join(', ');
+        setTimeout(() => this.toast(`🔓 Ny bane: ${names}`), 900);
+      }
     }
     // 3 stjerner → end-of-run (én gang pr. session)
     if (stars >= 3 && !this._endRunShown) {
@@ -1425,17 +1450,37 @@ export class Game {
     if (!panel) return;
     const title = document.getElementById('end-run-title');
     const body = document.getElementById('end-run-body');
-    const nextId = nextScenarioId(this.scenario?.id);
-    const next = SCENARIOS.find((s) => s.id === nextId);
+    const nextBtn = document.getElementById('end-run-next');
+    this.meta = loadMeta();
+    const nextId = nextUnlockedScenarioId(this.scenario?.id, this.meta);
+    const next = nextId ? SCENARIOS.find((s) => s.id === nextId) : null;
+    const chainNext = getScenario(nextScenarioId(this.scenario?.id));
+    const chainLocked =
+      chainNext &&
+      chainNext.id !== this.scenario?.id &&
+      !isScenarioUnlocked(chainNext, this.meta);
     if (title) title.textContent = `${'⭐'.repeat(stars)} Bane klaret!`;
     if (body) {
+      let nextLine = '';
+      if (next && next.id !== this.scenario?.id) {
+        nextLine = `<p class="muted">Næste: ${next.name}</p>`;
+      } else if (chainLocked) {
+        nextLine = `<p class="muted">🔒 ${unlockHint(chainNext, this.meta)}</p>`;
+      } else {
+        nextLine = `<p class="muted">Alle åbne baner er spillet – vælg fra menu</p>`;
+      }
       body.innerHTML = `
         <p><strong>${this.scenario?.name || 'Bane'}</strong></p>
         <p>Leveret: <strong>${this.stats.delivered}</strong> · Jobs: <strong>${this.stats.jobsDone}</strong></p>
         <p>Saldo: <strong>${this.money} kr</strong> · Level ${this.meta.level}</p>
-        ${next ? `<p class="muted">Næste: ${next.name}</p>` : ''}`;
+        ${nextLine}`;
     }
-    panel.dataset.nextId = nextId || '';
+    panel.dataset.nextId = next && next.id !== this.scenario?.id ? nextId : '';
+    if (nextBtn) {
+      const canNext = !!(next && next.id !== this.scenario?.id);
+      nextBtn.disabled = !canNext;
+      nextBtn.textContent = canNext ? 'Næste bane' : 'Ingen ny bane';
+    }
     panel.classList.remove('hidden');
     this.paused = true;
   }
@@ -1453,7 +1498,18 @@ export class Game {
 
   startNextScenarioFromEnd() {
     const panel = document.getElementById('end-run');
-    const nextId = panel?.dataset?.nextId || nextScenarioId(this.scenario?.id);
+    this.meta = loadMeta();
+    let nextId = panel?.dataset?.nextId || '';
+    if (!nextId) nextId = nextUnlockedScenarioId(this.scenario?.id, this.meta) || '';
+    if (!nextId) {
+      this.toast('Ingen ulåst næste bane');
+      return;
+    }
+    const sc = getScenario(nextId);
+    if (!isScenarioUnlocked(sc, this.meta)) {
+      this.toast(unlockHint(sc, this.meta) || 'Banen er låst');
+      return;
+    }
     this.hideEndRun();
     this.startScenario(nextId);
   }

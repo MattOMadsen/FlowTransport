@@ -121,9 +121,17 @@ html, body {
   transform: translateY(-1px);
 }
 
-.scenario-card:disabled {
+.scenario-card:disabled,
+.scenario-card.locked {
   opacity: 0.55;
   cursor: not-allowed;
+  background: #f5f5f4;
+}
+
+.scenario-card.locked .blurb,
+.scenario-card.locked .stars {
+  color: #78716c;
+  font-size: 0.82rem;
 }
 
 .scenario-card .blurb {
