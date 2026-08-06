@@ -12,6 +12,7 @@ import {
   shouldShowTutorial,
   setTutorialDone
 } from './tutorial.js';
+import { isMuted } from './audio.js';
 
 const canvas = document.getElementById('game');
 const ui = {
@@ -177,6 +178,7 @@ function continueGame() {
 }
 
 function openMenu() {
+  closeGameMenu();
   game.goToMenu();
   hideTutorial();
   hud.classList.add('hidden');
@@ -184,9 +186,75 @@ function openMenu() {
   renderMenu();
 }
 
+const gameMenuEl = document.getElementById('game-menu');
+
+function syncGameMenuLabels() {
+  const pauseBtn = document.getElementById('game-menu-pause');
+  const muteBtn = document.getElementById('game-menu-mute');
+  if (pauseBtn) {
+    pauseBtn.textContent = game.paused ? '▶️ Fortsæt spil' : '⏸️ Pause';
+  }
+  if (muteBtn) {
+    muteBtn.textContent = isMuted() ? '🔇 Lyd er slået fra' : '🔊 Lyd er slået til';
+  }
+}
+
+function openGameMenu() {
+  if (!gameMenuEl) return;
+  // Pause mens menu er åben, så man ikke mister overblik
+  if (game.hasActiveSession && !game.paused) {
+    game.paused = true;
+    game.syncUI?.();
+  }
+  syncGameMenuLabels();
+  gameMenuEl.classList.add('open');
+}
+
+function closeGameMenu() {
+  gameMenuEl?.classList.remove('open');
+}
+
 document.getElementById('btn-fit')?.addEventListener('click', () => game.fitCamera());
 document.getElementById('btn-undo')?.addEventListener('click', () => game.undo());
-document.getElementById('btn-menu')?.addEventListener('click', () => openMenu());
+document.getElementById('btn-menu')?.addEventListener('click', () => {
+  if (gameMenuEl?.classList.contains('open')) closeGameMenu();
+  else openGameMenu();
+});
+document.getElementById('game-menu-close')?.addEventListener('click', () => {
+  closeGameMenu();
+  if (game.hasActiveSession && game.paused) {
+    game.paused = false;
+    game.syncUI?.();
+    game.toast?.('Fortsæt');
+  }
+});
+document.getElementById('game-menu-resume')?.addEventListener('click', () => {
+  closeGameMenu();
+  if (game.hasActiveSession) {
+    game.paused = false;
+    game.syncUI?.();
+    game.toast?.('Fortsæt');
+  }
+});
+document.getElementById('game-menu-pause')?.addEventListener('click', () => {
+  game.togglePause();
+  syncGameMenuLabels();
+});
+document.getElementById('game-menu-mute')?.addEventListener('click', () => {
+  game.toggleMute();
+  syncGameMenuLabels();
+});
+document.getElementById('game-menu-tutorial')?.addEventListener('click', () => {
+  closeGameMenu();
+  showTutorialStep(0);
+});
+document.getElementById('game-menu-home')?.addEventListener('click', () => {
+  const ok = window.confirm(
+    'Gå til startmenu?\n\nDit spil gemmes – du kan trykke «Fortsæt spil» bagefter.'
+  );
+  if (!ok) return;
+  openMenu();
+});
 document.getElementById('btn-continue')?.addEventListener('click', () => continueGame());
 document.getElementById('btn-pause')?.addEventListener('click', () => game.togglePause());
 document.getElementById('btn-mute')?.addEventListener('click', () => game.toggleMute());

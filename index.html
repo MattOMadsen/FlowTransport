@@ -33,14 +33,16 @@
     <!-- HUD -->
     <div id="hud" class="hidden">
       <header class="top-hud">
+        <button type="button" id="btn-menu" class="icon-btn icon-btn-inline hud-menu-btn" title="Spilmenu">☰</button>
         <div class="stat-pill" id="money">0 kr</div>
         <div class="stat-pill soft" id="level">Lvl 1</div>
         <div class="stat-pill soft">📦 <span id="delivered">0</span></div>
         <div class="stat-pill soft">🚗 <span id="fleet">1</span></div>
-        <button type="button" id="btn-global-shop" class="icon-btn icon-btn-inline" title="Ansæt folk">👷</button>
-        <button type="button" id="btn-mute" class="icon-btn icon-btn-inline" title="Lyd">🔊</button>
-        <button type="button" id="btn-pause" class="icon-btn icon-btn-inline" title="Pause">⏸️</button>
-        <button type="button" id="btn-menu" class="icon-btn" title="Menu / nyt spil">☰</button>
+        <div class="hud-actions">
+          <button type="button" id="btn-global-shop" class="icon-btn icon-btn-inline" title="Ansæt folk">👷</button>
+          <button type="button" id="btn-mute" class="icon-btn icon-btn-inline" title="Lyd">🔊</button>
+          <button type="button" id="btn-pause" class="icon-btn icon-btn-inline" title="Pause">⏸️</button>
+        </div>
       </header>
 
       <div class="side-panel jobs-panel" id="side-panel">
@@ -148,6 +150,23 @@
           </div>
           <p class="muted">Permanente medarbejdere (gemmes med profil). De sænker priser / hjælper – de bygger <strong>ikke</strong> veje for dig offline.</p>
           <div id="global-shop-list" class="shop-grid"></div>
+        </div>
+      </div>
+
+      <div id="game-menu" class="sheet" role="dialog" aria-labelledby="game-menu-title">
+        <div class="sheet-inner game-menu-inner">
+          <div class="sheet-head">
+            <h3 id="game-menu-title">Spilmenu</h3>
+            <button type="button" id="game-menu-close" class="icon-btn" title="Luk">✕</button>
+          </div>
+          <p class="muted game-menu-note">Spillet gemmes automatisk, når du går til startmenu.</p>
+          <div class="game-menu-list">
+            <button type="button" id="game-menu-resume" class="game-menu-item">▶️ Fortsæt</button>
+            <button type="button" id="game-menu-pause" class="game-menu-item">⏸️ Pause</button>
+            <button type="button" id="game-menu-mute" class="game-menu-item">🔊 Lyd</button>
+            <button type="button" id="game-menu-tutorial" class="game-menu-item">📘 Vis tutorial</button>
+            <button type="button" id="game-menu-home" class="game-menu-item game-menu-item-danger">🏠 Til startmenu</button>
+          </div>
         </div>
       </div>
     </div>
