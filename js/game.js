@@ -1,0 +1,1692 @@
+/**
+ * FlowTransport game orchestrator – slim, graph-based.
+ */
+
+import {
+  RoadGraph,
+  polyLength,
+  closestOnPoly,
+  splitPolyAtT,
+  nearestNode,
+  resetGraphIds
+} from './graph.js';
+import { Vehicle, resetVehicleIds } from './vehicle.js';
+import { buildPlaces } from './places.js';
+import { generateJob, jobLabel, setNextJobId, restoreJob } from './jobs.js';
+import { saveSession, loadSessionRaw, clearSession, hasSavedSession } from './session.js';
+import {
+  VEHICLE_CLASSES,
+  vehicleCanDoJob,
+  buyPrice,
+  upgradePrice,
+  canUpgrade,
+  sellPriceForClass,
+  roadLaneLabel,
+  serviceCost,
+  wearLabel
+} from './fleet.js';
+import {
+  getScenario,
+  evaluateStars,
+  goalLabel,
+  nextScenarioId,
+  nextUnlockedScenarioId,
+  isScenarioUnlocked,
+  unlockHint,
+  newlyUnlockedScenarios,
+  SCENARIOS
+} from './scenarios.js';
+import { loadMeta, saveMeta, addXp, setScenarioStars, XP_REWARDS } from './meta.js';
+import {
+  loadDaily,
+  bumpDaily,
+  claimDaily,
+  dailyUi,
+  isDailyComplete
+} from './daily.js';
+import {
+  SHOP_BUFFS,
+  BUILDINGS,
+  hasShopBuff,
+  roadCostMul,
+  snapRadiusMul,
+  serviceCostMul,
+  roadUpgradeCostMul,
+  jobSpawnInterval,
+  hiredCount
+} from './shop.js';
+import { tryUnlock } from './achievements.js';
+import { Camera } from './camera.js';
+import { InputHandler } from './input.js';
+import { Renderer } from './render.js';
+import { worldToIso, isoToWorld } from './iso.js';
+import { loadGameAssets } from './assets.js';
+import { buildScenery, strokeCrossesWater } from './worldgen.js';
+import { playRoad, playDeliver, playBuy, playError, playJobDone, isMuted, toggleMute } from './audio.js';
+
+const ROAD_COST_PER_PX = 0.42;
+const ROAD_BASE_COST = 18;
+const BRIDGE_MULT = 1.85;
+const SNAP_R = 40;
+/** 1 = alm · 2 = 2-spor · 3 = motorvej */
+const MAX_ROAD_LANES = 3;
+const ROAD_UPGRADE_BASE = 40;
+const ROAD_UPGRADE_PER_PX = 0.22;
+/** Motorvej (2 → 3) dyrere pr. længde */
+const HIGHWAY_UPGRADE_BASE = 75;
+const HIGHWAY_UPGRADE_PER_PX = 0.38;
+
+export class Game {
+  constructor(canvas, ui) {
+    this.canvas = canvas;
+    this.ui = ui;
+    this.renderer = new Renderer(canvas);
+    this.camera = new Camera();
+    this.graph = new RoadGraph();
+    this.roads = [];
+    this.roadsById = new Map();
+    this.places = [];
+    this.scenery = { lakes: [], trees: [], forests: [], hills: [] };
+    this.vehicles = [];
+    this.jobs = [];
+    this.money = 1600;
+    this.tool = 'draw';
+    this.strokePreview = [];
+    this.strokePoints = [];
+    /** Live snap feedback while drawing: { start, end, tip } */
+    this.strokeSnap = null;
+    this.undoStack = [];
+    this.scenario = null;
+    this.stats = { delivered: 0, jobsDone: 0 };
+    this.meta = loadMeta();
+    this.jobTimer = 0;
+    this.toastTimer = 0;
+    this.toastText = '';
+    /** @type {number|null} job id highlighted from task list */
+    this.selectedJobId = null;
+    this.selectedJobTimer = 0;
+    this.running = false;
+    this.paused = false;
+    this.hasActiveSession = false;
+    this._last = 0;
+    this._loopGen = 0;
+    this._saveAcc = 0;
+    this.daily = loadDaily();
+    this._endRunShown = false;
+
+    this.input = new InputHandler(canvas, {
+      getTool: () => this.tool,
+      getZoom: () => this.camera.zoom,
+      onDrawStart: (x, y) => {
+        if (this.paused) return;
+        if (this.tool === 'draw') this.beginStroke(x, y);
+      },
+      onDrawMove: (x, y) => {
+        if (this.paused) return;
+        if (this.tool === 'draw') this.moveStroke(x, y);
+      },
+      onDrawEnd: () => {
+        if (this.tool === 'draw') this.endStroke();
+      },
+      onCancelDraw: () => {
+        this.strokePoints = [];
+        this.strokePreview = [];
+        this.strokeSnap = null;
+      },
+      onPanStart: () => {},
+      onPanMove: (dx, dy) => this.camera.pan(dx, dy),
+      onPanEnd: () => {},
+      onPinchStart: () => {},
+      onPinch: (mx, my, z) => this.camera.setZoom(z, mx, my),
+      onPinchEnd: () => {},
+      onWheel: (cx, cy, dy) => {
+        const r = canvas.getBoundingClientRect();
+        const factor = dy > 0 ? 0.9 : 1.1;
+        this.camera.setZoom(this.camera.zoom * factor, cx - r.left, cy - r.top);
+      },
+      onTap: (x, y) => {
+        if (this.paused) return;
+        this.handleTap(x, y);
+      }
+    });
+  }
+
+  async init() {
+    await loadGameAssets();
+    this.renderer.resize();
+    window.addEventListener('resize', () => {
+      this.renderer.resize();
+      this.fitCamera();
+    });
+  }
+
+  screenToWorld(sx, sy) {
+    const view = this.camera.screenToView(sx, sy);
+    return isoToWorld(view.x, view.y);
+  }
+
+  /** Full new game on a scenario (from menu). */
+  startScenario(id) {
+    this.meta = loadMeta();
+    const sc = getScenario(id);
+    if (!isScenarioUnlocked(sc, this.meta)) {
+      this.toast(unlockHint(sc, this.meta) || 'Banen er låst');
+      return;
+    }
+    clearSession();
+    this._bootWorld(id, null);
+    this.toast('Nyt spil – tegn veje mellem byerne 🛣️');
+    this.persistSession();
+  }
+
+  /**
+   * Build world from scenario; optional saved data overwrites economy/roads/fleet.
+   * @param {string} scenarioId
+   * @param {object|null} saved
+   */
+  _bootWorld(scenarioId, saved) {
+    resetGraphIds();
+    resetVehicleIds(1);
+    setNextJobId(1);
+
+    this.scenario = getScenario(scenarioId);
+    this.worldW = this.scenario.worldW;
+    this.worldH = this.scenario.worldH;
+    this.money = this.scenario.startMoney;
+    this.roads = [];
+    this.roadsById.clear();
+    this.graph.clear();
+    this.vehicles = [];
+    this.jobs = [];
+    this.stats = { delivered: 0, jobsDone: 0 };
+    this.selectedJobId = null;
+    this.selectedJobTimer = 0;
+    this.undoStack = [];
+    this.strokePoints = [];
+    this.strokePreview = [];
+    this.strokeSnap = null;
+    this.paused = false;
+    this.tool = 'draw';
+    this.meta = loadMeta();
+    this.daily = loadDaily();
+    this._endRunShown = false;
+    this.hideEndRun();
+
+    this.places = buildPlaces(
+      this.worldW,
+      this.worldH,
+      this.scenario.layout,
+      this.scenario.seed
+    );
+    this.scenery = buildScenery(this.worldW, this.worldH, this.places, this.scenario.seed);
+    for (const p of this.places) {
+      const node = this.graph.addNode(p.x, p.y, p.id);
+      p.nodeId = node.id;
+    }
+
+    if (saved) {
+      this._applySaved(saved);
+    } else {
+      const home = this.places.find((p) => p.type === 'capital') || this.places[0];
+      this.vehicles.push(
+        new Vehicle({ x: home.x, y: home.y, classId: 'car', homePlace: home })
+      );
+      this.seedJobs(4);
+    }
+
+
+    this.renderer.resize();
+    if (saved?.camera) {
+      this.camera.x = saved.camera.x ?? this.camera.x;
+      this.camera.y = saved.camera.y ?? this.camera.y;
+      this.camera.zoom = saved.camera.zoom ?? this.camera.zoom;
+    } else {
+      this.fitCamera();
+    }
+    this.hasActiveSession = true;
+    this.running = true;
+    this._loopGen += 1;
+    const gen = this._loopGen;
+    this._last = performance.now();
+    this.loop(this._last, gen);
+    this.tryAssignJobs();
+    this.syncUI();
+  }
+
+  _applySaved(saved) {
+    this.money = saved.money ?? this.money;
+    this.stats = {
+      delivered: saved.stats?.delivered | 0,
+      jobsDone: saved.stats?.jobsDone | 0
+    };
+
+    // Buildings on places
+    if (Array.isArray(saved.buildings)) {
+      const byId = new Map(this.places.map((p) => [p.id, p]));
+      for (const b of saved.buildings) {
+        const p = byId.get(b.id);
+        if (!p) continue;
+        p.buildings = {
+          station: !!b.station,
+          warehouse: !!b.warehouse,
+          depot: !!b.depot
+        };
+      }
+    }
+
+    for (const r of saved.roads || []) {
+      if (!r.points || r.points.length < 2) continue;
+      const road = {
+        id: r.id || `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+        points: r.points.map((p) => ({ x: p.x, y: p.y })),
+        lanes: r.lanes || 1,
+        paidCost: r.paidCost || 0,
+        isBridge: !!r.isBridge
+      };
+      this.roads.push(road);
+      this.roadsById.set(road.id, road);
+      if (!this._registerRoad(road)) {
+        this.roads.pop();
+        this.roadsById.delete(road.id);
+      }
+    }
+
+    const byId = new Map(this.places.map((p) => [p.id, p]));
+    if (saved.nextJobId) setNextJobId(saved.nextJobId);
+    for (const j of saved.jobs || []) {
+      const job = restoreJob(j, byId);
+      if (job) this.jobs.push(job);
+    }
+    let maxId = 0;
+    for (const j of this.jobs) maxId = Math.max(maxId, j.id | 0);
+    setNextJobId(maxId + 1);
+
+    resetVehicleIds(1);
+    const fleet = saved.fleet || [];
+    if (!fleet.length) {
+      const home = this.places.find((p) => p.type === 'capital') || this.places[0];
+      this.vehicles.push(
+        new Vehicle({ x: home.x, y: home.y, classId: 'car', homePlace: home })
+      );
+    } else {
+      for (const f of fleet) {
+        const home = byId.get(f.homeId) || this.places[0];
+        const x = Number.isFinite(f.x) ? f.x : home.x;
+        const y = Number.isFinite(f.y) ? f.y : home.y;
+        this.vehicles.push(
+          new Vehicle({
+            x,
+            y,
+            classId: f.classId || 'car',
+            homePlace: home,
+            upgradeRank: f.upgradeRank | 0,
+            wear: f.wear | 0
+          })
+        );
+      }
+    }
+  }
+
+  persistSession() {
+    if (!this.hasActiveSession || !this.scenario) return false;
+    return saveSession(this);
+  }
+
+  /** Load disk-session if any (after page reload). */
+  tryLoadSavedSession() {
+    const data = loadSessionRaw();
+    if (!data) return false;
+    this._bootWorld(data.scenarioId, data);
+    this.toast('Gemt spil genindlæst');
+    return true;
+  }
+
+  hasDiskSession() {
+    return hasSavedSession();
+  }
+
+  /** Leave to menu without destroying world (optional continue). */
+  goToMenu() {
+    this.persistSession();
+    this.running = false;
+    this.paused = true;
+  }
+
+  /** Resume current session from menu (memory or disk). */
+  resumeSession() {
+    if (this.hasActiveSession && this.scenario) {
+      this.paused = false;
+      this.running = true;
+      this._loopGen += 1;
+      const gen = this._loopGen;
+      this._last = performance.now();
+      this.loop(this._last, gen);
+      this.syncUI();
+      this.toast('Fortsætter spil');
+      return true;
+    }
+    if (this.tryLoadSavedSession()) return true;
+    return false;
+  }
+
+  togglePause() {
+    if (!this.hasActiveSession) return;
+    this.paused = !this.paused;
+    this.toast(this.paused ? 'Pause' : 'Fortsæt');
+    this.syncUI();
+  }
+
+  toggleMute() {
+    const m = toggleMute();
+    this.toast(m ? 'Lyd slået fra' : 'Lyd slået til');
+    this.syncUI();
+    return m;
+  }
+
+  /** Center camera on world point (minimap tap). */
+  centerOnWorld(wx, wy) {
+    if (!Number.isFinite(wx) || !Number.isFinite(wy)) return;
+    const iso = worldToIso(wx, wy);
+    const w = this.renderer.cssW || window.innerWidth;
+    const h = this.renderer.cssH || window.innerHeight;
+    this.camera.x = w / 2 - iso.x * this.camera.zoom;
+    this.camera.y = h / 2 - iso.y * this.camera.zoom;
+  }
+
+  fitCamera() {
+    if (!this.worldW || !this.worldH) return;
+    const w = this.renderer.cssW || window.innerWidth;
+    const h = this.renderer.cssH || window.innerHeight;
+    if (!w || !h) return;
+
+    const samples = [
+      worldToIso(0, 0),
+      worldToIso(this.worldW, 0),
+      worldToIso(this.worldW, this.worldH),
+      worldToIso(0, this.worldH)
+    ];
+    // Include places so Fit frames gameplay, not empty corners alone
+    for (const p of this.places || []) {
+      samples.push(worldToIso(p.x, p.y));
+      samples.push(worldToIso(p.x + p.r, p.y + p.r));
+      samples.push(worldToIso(p.x - p.r, p.y - p.r));
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const s of samples) {
+      minX = Math.min(minX, s.x);
+      minY = Math.min(minY, s.y);
+      maxX = Math.max(maxX, s.x);
+      maxY = Math.max(maxY, s.y);
+    }
+    // Padding in iso-space so labels/sprites aren’t clipped
+    const padIso = 80;
+    this.camera.fitIsoBounds(
+      minX - padIso,
+      minY - padIso,
+      maxX + padIso,
+      maxY + padIso,
+      w,
+      h,
+      40
+    );
+  }
+
+  jobSpawnOpts() {
+    return {
+      expressBias: hasShopBuff(this.meta, 'express_office') ? 0.12 : 0,
+      cargoBias: hasShopBuff(this.meta, 'cargo_hub') ? 0.1 : 0
+    };
+  }
+
+  seedJobs(n) {
+    const opts = this.jobSpawnOpts();
+    for (let i = 0; i < n; i++) {
+      const j = generateJob(this.places, opts);
+      if (j) this.jobs.push(j);
+    }
+  }
+
+  snapR() {
+    return SNAP_R * snapRadiusMul(this.meta);
+  }
+
+  unlockAch(id) {
+    const def = tryUnlock(this.meta, id, addXp);
+    if (def) {
+      saveMeta(this.meta);
+      this.toast(`🏆 ${def.label} (+${def.xp} XP)`);
+    }
+  }
+
+  setTool(tool) {
+    this.tool = tool;
+    this.syncUI();
+  }
+
+  toast(msg) {
+    this.toastText = msg;
+    this.toastTimer = 2.8;
+    if (this.ui.toast) {
+      this.ui.toast.textContent = msg;
+      this.ui.toast.classList.add('show');
+    }
+  }
+
+  /** Clamp world point to playable board (inkl. lille margin 0). */
+  clampWorld(x, y) {
+    const maxX = this.worldW || 1;
+    const maxY = this.worldH || 1;
+    return {
+      x: Math.max(0, Math.min(maxX, x)),
+      y: Math.max(0, Math.min(maxY, y))
+    };
+  }
+
+  inWorld(x, y, pad = 0) {
+    const maxX = this.worldW || 0;
+    const maxY = this.worldH || 0;
+    return x >= -pad && y >= -pad && x <= maxX + pad && y <= maxY + pad;
+  }
+
+  beginStroke(sx, sy) {
+    if (this.tool !== 'draw' || this.paused) return;
+    const raw = this.screenToWorld(sx, sy);
+    // Start uden for kort → ingen streg
+    if (!this.inWorld(raw.x, raw.y, 8)) {
+      playError();
+      this.toast('Tegn inde på kortet');
+      return;
+    }
+    const w = this.clampWorld(raw.x, raw.y);
+    const snap = this.snapPoint(w.x, w.y);
+    this.strokePoints = [{ x: snap.x, y: snap.y }];
+    this.strokePreview = [...this.strokePoints];
+    this.strokeSnap = { start: snap, end: snap, tip: { x: w.x, y: w.y } };
+  }
+
+  moveStroke(sx, sy) {
+    if (!this.strokePoints.length) return;
+    const raw = this.screenToWorld(sx, sy);
+    const w = this.clampWorld(raw.x, raw.y);
+    const last = this.strokePoints[this.strokePoints.length - 1];
+    // Altid opdatér snap-magnet (også mellem sample-punkter)
+    const snap = this.snapPoint(w.x, w.y);
+    const start =
+      this.strokeSnap?.start || this.snapPoint(this.strokePoints[0].x, this.strokePoints[0].y);
+    this.strokeSnap = { start, end: snap, tip: { x: w.x, y: w.y } };
+    this.strokePreview = [...this.strokePoints.slice(0, -1), { x: snap.x, y: snap.y }];
+
+    if (Math.hypot(w.x - last.x, w.y - last.y) < 10) return;
+    this.strokePoints.push({ x: w.x, y: w.y });
+  }
+
+  endStroke() {
+    if (this.strokePoints.length < 2) {
+      this.strokePoints = [];
+      this.strokePreview = [];
+      this.strokeSnap = null;
+      return;
+    }
+    // Clamp + snap ends – aldrig uden for map
+    const mid = this.strokePoints.slice(1, -1).map((p) => this.clampWorld(p.x, p.y));
+    const firstC = this.clampWorld(this.strokePoints[0].x, this.strokePoints[0].y);
+    const lastC = this.clampWorld(
+      this.strokePoints[this.strokePoints.length - 1].x,
+      this.strokePoints[this.strokePoints.length - 1].y
+    );
+    const first = this.snapPoint(firstC.x, firstC.y);
+    const last = this.snapPoint(lastC.x, lastC.y);
+    const firstPt = this.clampWorld(first.x, first.y);
+    const lastPt = this.clampWorld(last.x, last.y);
+    const points = [
+      { x: firstPt.x, y: firstPt.y },
+      ...mid,
+      { x: lastPt.x, y: lastPt.y }
+    ];
+    // Simplify very dense points
+    const simplified = simplify(points, 8).map((p) => this.clampWorld(p.x, p.y));
+    const len = polyLength(simplified);
+    if (len < 40) {
+      this.toast('Vejen er for kort');
+      this.strokePoints = [];
+      this.strokePreview = [];
+      this.strokeSnap = null;
+      return;
+    }
+    const overWater = strokeCrossesWater(simplified, this.scenery?.lakes);
+    let cost = Math.round(ROAD_BASE_COST + len * ROAD_COST_PER_PX);
+    if (overWater) cost = Math.round(cost * BRIDGE_MULT);
+    cost = Math.max(1, Math.round(cost * roadCostMul(this.meta)));
+    if (this.money < cost) {
+      playError();
+      this.toast(`Ikke nok penge (mangler ${cost - this.money} kr)`);
+      this.strokePoints = [];
+      this.strokePreview = [];
+      this.strokeSnap = null;
+      return;
+    }
+    this.money -= cost;
+    const road = {
+      id: `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+      points: simplified,
+      lanes: 1,
+      paidCost: cost,
+      isBridge: overWater
+    };
+    this.roads.push(road);
+    this.roadsById.set(road.id, road);
+    const okGraph = this._registerRoad(road);
+    if (!okGraph) {
+      // Visuel vej uden graf → biler kan aldrig køre. Rul tilbage.
+      this.roads.pop();
+      this.roadsById.delete(road.id);
+      this.money += cost;
+      playError();
+      this.toast('Vejen forbandt ikke – træk fra by til by (snap-ring)');
+      this.strokePoints = [];
+      this.strokePreview = [];
+      this.strokeSnap = null;
+      this.syncUI();
+      return;
+    }
+    this.undoStack.push({ type: 'road', roadId: road.id, cost });
+    addXp(this.meta, XP_REWARDS.road);
+    playRoad();
+    this.unlockAch('first_road');
+    if (this.allPlacesConnected()) this.unlockAch('connect_all');
+    bumpDaily(this.daily, 'roads', 1);
+    this.refreshDailyUi();
+
+    // Sørg for at spillet kører (fx efter end-run/pause)
+    this.paused = false;
+
+    const connected = this._snapIsConnected(first) && this._snapIsConnected(last);
+    const assignedBefore = this.vehicles.filter((v) => !v.idle).length;
+    this.tryAssignJobs();
+    const assignedAfter = this.vehicles.filter((v) => !v.idle).length;
+    const started = assignedAfter > assignedBefore;
+
+    if (!connected) {
+      this.toast(
+        overWater
+          ? `Bro bygget (−${cost} kr) – men ende snappede ikke ⚠️`
+          : `Vej bygget (−${cost} kr) – træk tættere på by/vej for at forbinde 🔗`
+      );
+    } else if (started) {
+      this.toast(overWater ? `Bro bygget (−${cost} kr) 🌉 bil kører` : `Vej bygget (−${cost} kr) · bil kører`);
+    } else {
+      this.toast(overWater ? `Bro bygget (−${cost} kr) 🌉` : `Vej bygget (−${cost} kr)`);
+    }
+
+    this.strokePoints = [];
+    this.strokePreview = [];
+    this.strokeSnap = null;
+    this.persistSession();
+    this.syncUI();
+  }
+
+  /** place / road / node = graf-forbindelse; free = ny løs ende */
+  _snapIsConnected(snap) {
+    return snap && snap.kind && snap.kind !== 'free';
+  }
+
+  /** Closest road under world point within maxDist */
+  findRoadNear(wx, wy, maxDist = 36) {
+    let best = null;
+    let bestD = maxDist;
+    for (const road of this.roads) {
+      const c = closestOnPoly(road.points, wx, wy);
+      if (c.dist < bestD) {
+        bestD = c.dist;
+        best = road;
+      }
+    }
+    return best;
+  }
+
+  /** Remove nearest road under world point (erase tool). */
+  eraseAt(wx, wy) {
+    const best = this.findRoadNear(wx, wy, 36);
+    if (!best) {
+      playError();
+      this.toast('Ingen vej tæt på');
+      return;
+    }
+    this.removeRoad(best.id, true);
+  }
+
+  /**
+   * Pris for næste vejniveau (1→2 2-spor, 2→3 motorvej).
+   * @param {object} road
+   * @param {number} [fromLanes]
+   */
+  upgradeRoadCost(road, fromLanes) {
+    if (!road) return 0;
+    const len = polyLength(road.points) || 0;
+    const from = fromLanes != null ? fromLanes | 0 : road.lanes || 1;
+    let cost;
+    if (from >= 2) {
+      cost = Math.max(90, Math.round(HIGHWAY_UPGRADE_BASE + len * HIGHWAY_UPGRADE_PER_PX));
+    } else {
+      cost = Math.max(45, Math.round(ROAD_UPGRADE_BASE + len * ROAD_UPGRADE_PER_PX));
+    }
+    return Math.max(1, Math.round(cost * roadUpgradeCostMul(this.meta)));
+  }
+
+  /** Upgrade tool: tap → 2-spor, tap igen → motorvej (hurtigere + bredere). */
+  upgradeAt(wx, wy) {
+    const road = this.findRoadNear(wx, wy, 40);
+    if (!road) {
+      playError();
+      this.toast('Tryk på en vej: 2-spor → motorvej');
+      return;
+    }
+    const lanes = road.lanes || 1;
+    if (lanes >= MAX_ROAD_LANES) {
+      this.toast('Allerede motorvej 🏎️');
+      return;
+    }
+    const next = lanes + 1;
+    const cost = this.upgradeRoadCost(road, lanes);
+    if (this.money < cost) {
+      playError();
+      this.toast(`Ikke nok penge (mangler ${cost - this.money} kr)`);
+      return;
+    }
+    this.money -= cost;
+    road.lanes = next;
+    road.paidCost = (road.paidCost || 0) + cost;
+    playRoad();
+    if (next === 2) this.unlockAch('dual_lane');
+    if (next >= 3) this.unlockAch('highway');
+    const label = roadLaneLabel(next);
+    const icon = next >= 3 ? '🏎️' : '🛣️';
+    this.toast(`${label} (−${cost} kr) ${icon}`);
+    bumpDaily(this.daily, 'roads', 1);
+    this.refreshDailyUi();
+    this.persistSession();
+    this.syncUI();
+  }
+
+  removeRoad(roadId, fromErase = false) {
+    const idx = this.roads.findIndex((r) => r.id === roadId);
+    if (idx < 0) return;
+    const road = this.roads[idx];
+    this.roads.splice(idx, 1);
+    this.roadsById.delete(roadId);
+    this.graph.removeRoad(roadId);
+    const refund = Math.round((road.paidCost || 0) * 0.85);
+    this.money += refund;
+    this._invalidateRoutes();
+    playRoad();
+    this.toast(fromErase ? `Vej slettet (+${refund} kr)` : `Fortryd (+${refund} kr)`);
+    this.syncUI();
+  }
+
+  /**
+   * Register road in graph. @returns {boolean} false if endpoints invalid / same node
+   */
+  _registerRoad(road) {
+    // Hold alle punkter inde på brættet
+    road.points = (road.points || []).map((p) => this.clampWorld(p.x, p.y));
+    if (road.points.length < 2) return false;
+    const a = road.points[0];
+    const b = road.points[road.points.length - 1];
+    const nodeA = this._resolveEndpoint(a.x, a.y, road.id);
+    const nodeB = this._resolveEndpoint(b.x, b.y, road.id);
+    if (!nodeA || !nodeB || nodeA.id === nodeB.id) return false;
+    // Snap geometry til knuder (by-hubs uændret)
+    road.points[0] = { x: nodeA.x, y: nodeA.y };
+    road.points[road.points.length - 1] = { x: nodeB.x, y: nodeB.y };
+    // Mellempunkter clamp – ender må ikke flyttes væk fra by-hub
+    for (let i = 1; i < road.points.length - 1; i++) {
+      road.points[i] = this.clampWorld(road.points[i].x, road.points[i].y);
+    }
+    const len = polyLength(road.points);
+    if (len < 1) return false;
+    const edge = this.graph.addEdge(nodeA.id, nodeB.id, road.id, len, 0);
+    return !!edge;
+  }
+
+  /**
+   * Endpoint → node. Splits existing road if snap is mid-edge (T-junction).
+   * Prioriterer altid by-hubs så jobs kan pathfinde.
+   * @param {string} [ignoreRoadId]
+   */
+  _resolveEndpoint(x, y, ignoreRoadId = null) {
+    const R = this.snapR();
+    // Generøs by-snap først (vigtigst for bil-ruter)
+    const placeNode = this._placeNodeNear(x, y, Math.max(R * 1.35, 56));
+    if (placeNode) return placeNode;
+
+    const near = this.graph.findNodeNear(x, y, R);
+    // Hvis tæt på by men fandt anden knude – brug by-hub alligevel
+    if (near?.placeId) return near;
+    const placeAnyway = this._placeNodeNear(x, y, R * 1.8);
+    if (placeAnyway) return placeAnyway;
+
+    // Snap mid-road → split into junction
+    let bestRoad = null;
+    let best = null;
+    for (const road of this.roads) {
+      if (road.id === ignoreRoadId) continue;
+      const c = closestOnPoly(road.points, x, y);
+      if (c.dist < R && (!best || c.dist < best.dist)) {
+        best = c;
+        bestRoad = road;
+      }
+    }
+    if (bestRoad && best && best.t > 0.04 && best.t < 0.96) {
+      const junc = this._splitRoadAt(bestRoad, best.t);
+      if (junc) return junc;
+    }
+
+    if (near) return near;
+    return this.graph.getOrCreateNode(x, y, null, R);
+  }
+
+  /** Split road geometry + graph into two segments at t */
+  _splitRoadAt(road, t) {
+    const split = splitPolyAtT(road.points, t);
+    if (!split) return null;
+    this.graph.removeRoad(road.id);
+
+    const junc = this.graph.getOrCreateNode(split.mid.x, split.mid.y, null, 12);
+    junc.x = split.mid.x;
+    junc.y = split.mid.y;
+
+    // Keep original id on first half
+    road.points = split.before;
+    const lenA = polyLength(road.points);
+    const endA = road.points[0];
+    const nodeA =
+      this._placeNodeNear(endA.x, endA.y) ||
+      this.graph.findNodeNear(endA.x, endA.y, SNAP_R) ||
+      this.graph.getOrCreateNode(endA.x, endA.y, null, SNAP_R);
+    road.points[0] = { x: nodeA.x, y: nodeA.y };
+    road.points[road.points.length - 1] = { x: junc.x, y: junc.y };
+    this.graph.addEdge(nodeA.id, junc.id, road.id, polyLength(road.points) || lenA, 0);
+
+    // Second half as new road
+    const roadB = {
+      id: `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+      points: split.after,
+      lanes: road.lanes || 1,
+      paidCost: 0,
+      isBridge: !!road.isBridge
+    };
+    const endB = roadB.points[roadB.points.length - 1];
+    const nodeB =
+      this._placeNodeNear(endB.x, endB.y) ||
+      this.graph.findNodeNear(endB.x, endB.y, SNAP_R) ||
+      this.graph.getOrCreateNode(endB.x, endB.y, null, SNAP_R);
+    roadB.points[0] = { x: junc.x, y: junc.y };
+    roadB.points[roadB.points.length - 1] = { x: nodeB.x, y: nodeB.y };
+    this.roads.push(roadB);
+    this.roadsById.set(roadB.id, roadB);
+    this.graph.addEdge(junc.id, nodeB.id, roadB.id, polyLength(roadB.points), 0);
+
+    this._invalidateRoutes();
+    return junc;
+  }
+
+  /**
+   * @param {number} [maxDist] override radius (default place.r * 1.55)
+   */
+  _placeNodeNear(x, y, maxDist = null) {
+    let best = null;
+    let bestD = Infinity;
+    for (const p of this.places) {
+      const lim = maxDist != null ? maxDist : p.r * 1.55;
+      const d = Math.hypot(p.x - x, p.y - y);
+      if (d < lim && d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    if (best) {
+      const node = this.graph.nodes.get(best.nodeId);
+      if (node) return node;
+      // Genskab hub hvis mistet
+      const n = this.graph.addNode(best.x, best.y, best.id);
+      best.nodeId = n.id;
+      return n;
+    }
+    return null;
+  }
+
+  snapPoint(x, y) {
+    const R = this.snapR();
+    // Places first (generøs radius = nemmere by-forbindelser)
+    for (const p of this.places) {
+      const dist = Math.hypot(p.x - x, p.y - y);
+      const r = Math.max(p.r * 1.65, R * 1.2) * (snapRadiusMul(this.meta) > 1 ? 1.1 : 1);
+      if (dist < r) {
+        return {
+          x: p.x,
+          y: p.y,
+          kind: 'place',
+          label: p.name,
+          dist,
+          strength: 1 - dist / r
+        };
+      }
+    }
+    // Existing road (T-kryds / forlængelse)
+    let best = null;
+    for (const road of this.roads) {
+      const c = closestOnPoly(road.points, x, y);
+      if (c.dist < R && (!best || c.dist < best.dist)) {
+        best = {
+          x: c.x,
+          y: c.y,
+          kind: 'road',
+          label: 'Vej',
+          dist: c.dist,
+          strength: 1 - c.dist / R
+        };
+      }
+    }
+    if (best) return best;
+    const n = this.graph.findNodeNear(x, y, R);
+    if (n) {
+      const dist = Math.hypot(n.x - x, n.y - y);
+      // Node med sted-id tæller som by
+      if (n.placeId) {
+        const place = this.places.find((p) => p.id === n.placeId);
+        return {
+          x: n.x,
+          y: n.y,
+          kind: 'place',
+          label: place?.name || 'By',
+          dist,
+          strength: 1 - dist / R
+        };
+      }
+      return {
+        x: n.x,
+        y: n.y,
+        kind: 'node',
+        label: 'Kryds',
+        dist,
+        strength: 1 - dist / R
+      };
+    }
+    const c = this.clampWorld(x, y);
+    return { x: c.x, y: c.y, kind: 'free', label: null, dist: 0, strength: 0 };
+  }
+
+  undo() {
+    const act = this.undoStack.pop();
+    if (!act || act.type !== 'road') {
+      playError();
+      this.toast('Intet at fortryde');
+      return;
+    }
+    if (this.roadsById.has(act.roadId)) {
+      this.removeRoad(act.roadId, false);
+    } else {
+      this.toast('Vejen er allerede væk');
+    }
+  }
+
+  _invalidateRoutes() {
+    for (const v of this.vehicles) {
+      if (v.state === 'park') continue;
+      // Re-path if possible
+      if (v.job) {
+        const ok = this._repathVehicle(v);
+        if (!ok) {
+          v.job.claimedBy = null;
+          v.job = null;
+          v.cargo = 0;
+          v.state = 'park';
+          v.clearRoute();
+          if (v.homePlace) {
+            v.x = v.homePlace.x;
+            v.y = v.homePlace.y;
+          }
+        }
+      }
+    }
+  }
+
+  _repathVehicle(v) {
+    if (!v.job) return false;
+    const fromNode = this.graph.nodeForPlace(v.job.from.id);
+    const toNode = this.graph.nodeForPlace(v.job.to.id);
+    if (!fromNode || !toNode) return false;
+    const near = nearestNode(this.graph, v.x, v.y);
+    const curId = near?.node?.id;
+    if (!curId) return false;
+
+    const drop = this.graph.findPath(fromNode.id, toNode.id);
+    if (!drop) return false;
+    v._pathDropoff = drop;
+
+    if (v.state === 'to_pickup') {
+      const p1 = this.graph.findPath(curId, fromNode.id);
+      if (!p1) return false;
+      v._pathPickup = p1;
+      v.setRoute(p1);
+      return true;
+    }
+    if (v.state === 'loading') {
+      v._pathPickup = { edges: [], length: 0 };
+      return true;
+    }
+    if (v.state === 'to_dropoff') {
+      const p2 = this.graph.findPath(curId, toNode.id);
+      if (!p2) return false;
+      v.setRoute(p2);
+      return true;
+    }
+    if (v.state === 'unload') return true;
+    return false;
+  }
+
+  handleTap(sx, sy) {
+    const w = this.screenToWorld(sx, sy);
+    if (this.tool === 'erase') {
+      this.eraseAt(w.x, w.y);
+      return;
+    }
+    if (this.tool === 'upgrade') {
+      this.upgradeAt(w.x, w.y);
+      return;
+    }
+    for (const p of this.places) {
+      if (Math.hypot(p.x - w.x, p.y - w.y) < p.r * 1.3) {
+        this.openShop(p);
+        return;
+      }
+    }
+  }
+
+  openShop(place) {
+    const panel = this.ui.shop;
+    if (!panel) return;
+    panel.dataset.placeId = place.id;
+    panel.querySelector('.shop-title').textContent = place.name;
+    panel.classList.add('open');
+    this._shopPlace = place;
+    this.closeGlobalShop();
+    this.renderShopFleet();
+    this.renderCityBuildings();
+  }
+
+  closeShop() {
+    this.ui.shop?.classList.remove('open');
+    this._shopPlace = null;
+  }
+
+  openGlobalShop() {
+    this.closeShop();
+    const panel = this.ui.globalShop || document.getElementById('global-shop');
+    if (!panel) return;
+    panel.classList.add('open');
+    this.renderGlobalShop();
+  }
+
+  closeGlobalShop() {
+    (this.ui.globalShop || document.getElementById('global-shop'))?.classList.remove('open');
+  }
+
+  renderGlobalShop() {
+    const list = document.getElementById('global-shop-list');
+    if (!list) return;
+    const level = this.meta?.level || 1;
+    const n = hiredCount(this.meta);
+    list.innerHTML =
+      `<p class="hire-summary muted">Ansat: <strong>${n}/${SHOP_BUFFS.length}</strong> · de bygger ikke selv veje – de hjælper dig</p>` +
+      SHOP_BUFFS.map((item) => {
+        const owned = hasShopBuff(this.meta, item.id);
+        const locked = level < item.unlockLevel;
+        const disabled = owned || locked || this.money < item.price;
+        return `
+        <button type="button" class="shop-item global-item${owned ? ' hired' : ''}" data-buff="${item.id}"
+          ${disabled && !owned ? 'disabled' : ''} ${owned ? 'disabled' : ''}>
+          <span>${item.icon} ${item.label}</span>
+          <strong>${owned ? 'Ansat ✓' : locked ? `Lvl ${item.unlockLevel}` : `Ansæt ${item.price} kr`}</strong>
+          <small>${item.desc}</small>
+        </button>`;
+      }).join('');
+  }
+
+  buyBuff(buffId) {
+    const item = SHOP_BUFFS.find((b) => b.id === buffId);
+    if (!item) return;
+    if (hasShopBuff(this.meta, buffId)) {
+      this.toast('Allerede ansat');
+      return;
+    }
+    if ((this.meta.level || 1) < item.unlockLevel) {
+      this.toast(`Kræver level ${item.unlockLevel}`);
+      playError();
+      return;
+    }
+    if (this.money < item.price) {
+      this.toast('Ikke nok penge');
+      playError();
+      return;
+    }
+    this.money -= item.price;
+    if (!this.meta.shopOwned) this.meta.shopOwned = {};
+    this.meta.shopOwned[buffId] = true;
+    saveMeta(this.meta);
+    playBuy();
+    this.unlockAch('hire_staff');
+    if (hiredCount(this.meta) >= 3) this.unlockAch('hire_team');
+    this.toast(`${item.icon} Ansat: ${item.label}`);
+    this.renderGlobalShop();
+    this.persistSession();
+    this.syncUI();
+  }
+
+  renderCityBuildings() {
+    const el = document.getElementById('shop-buildings');
+    if (!el || !this._shopPlace) return;
+    const place = this._shopPlace;
+    if (!place.buildings) {
+      place.buildings = { station: false, warehouse: false, depot: false };
+    }
+    el.innerHTML = Object.values(BUILDINGS)
+      .map((b) => {
+        const owned = !!place.buildings[b.id];
+        return `
+          <button type="button" class="shop-item" data-build="${b.id}"
+            ${owned || this.money < b.price ? 'disabled' : ''}>
+            <span>${b.icon} ${b.label}</span>
+            <strong>${owned ? 'Bygget' : `${b.price} kr`}</strong>
+            <small>${b.desc}</small>
+          </button>`;
+      })
+      .join('');
+  }
+
+  buyBuilding(buildingId) {
+    const place = this._shopPlace;
+    const def = BUILDINGS[buildingId];
+    if (!place || !def) return;
+    if (!place.buildings) {
+      place.buildings = { station: false, warehouse: false, depot: false };
+    }
+    if (place.buildings[buildingId]) {
+      this.toast('Allerede bygget her');
+      return;
+    }
+    if (this.money < def.price) {
+      this.toast('Ikke nok penge');
+      playError();
+      return;
+    }
+    this.money -= def.price;
+    place.buildings[buildingId] = true;
+    playBuy();
+    this.toast(`${def.icon} ${def.label} i ${place.name}`);
+    this.renderCityBuildings();
+    this.persistSession();
+    this.syncUI();
+  }
+
+  /** Vehicles stationed at the open shop city (homePlace). */
+  vehiclesAtShop() {
+    const place = this._shopPlace;
+    if (!place) return [];
+    return this.vehicles.filter((v) => v.homePlace?.id === place.id);
+  }
+
+  renderShopFleet() {
+    const list = this.ui.shop?.querySelector('#shop-fleet');
+    if (!list) return;
+    const at = this.vehiclesAtShop();
+    if (!at.length) {
+      list.innerHTML = '<p class="muted shop-fleet-empty">Ingen biler i denne by endnu.</p>';
+      return;
+    }
+    list.innerHTML = at
+      .map((v) => {
+        const cls = VEHICLE_CLASSES[v.classId] || VEHICLE_CLASSES.car;
+        const rank = v.upgradeRank | 0;
+        const busy = !v.idle;
+        const upOk = canUpgrade(rank);
+        const upP = upgradePrice(rank, v.classId);
+        const wear = Math.round(v.wear || 0);
+        const sellP = sellPriceForClass(v.classId, rank, wear);
+        const svcP = Math.max(
+          1,
+          Math.round(serviceCost(v.classId, wear) * serviceCostMul(this.meta))
+        );
+        const needsService = wear >= 15;
+        const icon = cls.icon || (cls.kind === 'truck' ? '🚚' : '🚗');
+        const status = busy ? 'På job…' : 'Ledig';
+        const rankLabel = rank > 0 ? ` · ★${rank}` : '';
+        const wearTxt = wearLabel(wear);
+        return `
+          <div class="fleet-row" data-vid="${v.id}">
+            <div class="fleet-info">
+              <strong>${icon} ${cls.label}${rankLabel}</strong>
+              <small>Cap ${v.capacity} · ${status} · ${wearTxt} ${wear}%</small>
+            </div>
+            <div class="fleet-actions">
+              <button type="button" class="fleet-btn fleet-svc"
+                data-service-id="${v.id}"
+                ${busy || !needsService ? 'disabled' : ''}
+                title="Service (−${svcP} kr, nulstiller slid)">
+                🔧 ${svcP}
+              </button>
+              <button type="button" class="fleet-btn fleet-up"
+                data-upgrade-id="${v.id}"
+                ${busy || !upOk ? 'disabled' : ''}
+                title="${upOk ? `Opgrader last (+1, −${upP} kr)` : 'Max opgraderet'}">
+                ${upOk ? `⬆ ${upP}` : 'Max'}
+              </button>
+              <button type="button" class="fleet-btn fleet-sell"
+                data-sell-id="${v.id}"
+                ${busy ? 'disabled' : ''}
+                title="Sælg / udskift (+${sellP} kr${wear >= 70 ? ', slidt = lavere pris' : ''})">
+                Sælg ${sellP}
+              </button>
+            </div>
+          </div>`;
+      })
+      .join('');
+  }
+
+  buyVehicle(classId) {
+    const place = this._shopPlace || this.places[0];
+    const price = buyPrice(classId);
+    if (this.money < price) {
+      this.toast('Ikke nok penge');
+      return;
+    }
+    if (!VEHICLE_CLASSES[classId]) return;
+    this.money -= price;
+    this.vehicles.push(
+      new Vehicle({ x: place.x, y: place.y, classId, homePlace: place })
+    );
+    playBuy();
+    this.toast(`${VEHICLE_CLASSES[classId].label} købt (−${price} kr)`);
+    if (this.vehicles.length >= 3) this.unlockAch('fleet_3');
+    bumpDaily(this.daily, 'buy', 1);
+    this.refreshDailyUi();
+    this.renderShopFleet();
+    this.tryAssignJobs();
+    this.persistSession();
+    this.syncUI();
+  }
+
+  upgradeVehicle(vehicleId) {
+    const v = this.vehicles.find((x) => x.id === vehicleId);
+    if (!v) return;
+    if (!v.idle) {
+      this.toast('Kan ikke opgradere midt i et job');
+      playError();
+      return;
+    }
+    if (!canUpgrade(v.upgradeRank)) {
+      this.toast('Allerede max opgraderet');
+      return;
+    }
+    const price = upgradePrice(v.upgradeRank, v.classId);
+    if (this.money < price) {
+      this.toast('Ikke nok penge');
+      playError();
+      return;
+    }
+    this.money -= price;
+    v.upgradeRank += 1;
+    v.applyStats();
+    playBuy();
+    this.unlockAch('upgrade_car');
+    this.toast(`Opgraderet til ★${v.upgradeRank} (cap ${v.capacity})`);
+    bumpDaily(this.daily, 'upgrade', 1);
+    this.refreshDailyUi();
+    this.renderShopFleet();
+    this.persistSession();
+    this.syncUI();
+  }
+
+  serviceVehicle(vehicleId) {
+    const v = this.vehicles.find((x) => x.id === vehicleId);
+    if (!v) return;
+    if (!v.idle) {
+      this.toast('Kan ikke service midt i et job');
+      playError();
+      return;
+    }
+    const wear = Math.round(v.wear || 0);
+    if (wear < 15) {
+      this.toast('Bilen trænger ikke til service endnu');
+      return;
+    }
+    const price = Math.max(
+      1,
+      Math.round(serviceCost(v.classId, wear) * serviceCostMul(this.meta))
+    );
+    if (this.money < price) {
+      this.toast('Ikke nok penge til service');
+      playError();
+      return;
+    }
+    this.money -= price;
+    v.service();
+    playBuy();
+    this.unlockAch('service_car');
+    this.toast(`Service færdig (−${price} kr) 🔧`);
+    this.renderShopFleet();
+    this.persistSession();
+    this.syncUI();
+  }
+
+  sellVehicle(vehicleId) {
+    const v = this.vehicles.find((x) => x.id === vehicleId);
+    if (!v) return;
+    if (!v.idle) {
+      this.toast('Kan ikke sælge bil midt i et job');
+      playError();
+      return;
+    }
+    if (this.vehicles.length <= 1) {
+      this.toast('Du skal have mindst én bil');
+      playError();
+      return;
+    }
+    const wear = Math.round(v.wear || 0);
+    const refund = sellPriceForClass(v.classId, v.upgradeRank, wear);
+    this.money += refund;
+    this.vehicles = this.vehicles.filter((x) => x.id !== vehicleId);
+    playBuy();
+    this.unlockAch('sell_car');
+    if (wear >= 70) this.unlockAch('replace_worn');
+    this.toast(wear >= 70 ? `Udskiftet (+${refund} kr)` : `Solgt (+${refund} kr)`);
+    this.renderShopFleet();
+    this.persistSession();
+    this.syncUI();
+  }
+
+  tryAssignJobs() {
+    // Depot-hjem → prioritet i køen
+    const free = this.vehicles
+      .filter((v) => v.idle)
+      .sort((a, b) => {
+        const da = a.homePlace?.buildings?.depot ? 0 : 1;
+        const db = b.homePlace?.buildings?.depot ? 0 : 1;
+        return da - db;
+      });
+    for (const job of this.jobs) {
+      if (!job.active || job.claimedBy) continue;
+      const fromNode = this.graph.nodeForPlace(job.from.id);
+      const toNode = this.graph.nodeForPlace(job.to.id);
+      if (!fromNode || !toNode) continue;
+      const dropPath = this.graph.findPath(fromNode.id, toNode.id);
+      if (!dropPath) continue;
+
+      // Find bil der kan jobbet OG har sti til pickup (fra position eller hjem)
+      let candidate = null;
+      let pickPath = null;
+      for (const v of free) {
+        if (!vehicleCanDoJob(v.classId, job)) continue;
+        const home = v.homePlace || job.from;
+        const homeNode = this.graph.nodeForPlace(home.id);
+        const near = nearestNode(this.graph, v.x, v.y);
+        const startId = near?.node?.id || homeNode?.id || fromNode.id;
+        let path = this.graph.findPath(startId, fromNode.id);
+        if (!path && homeNode) path = this.graph.findPath(homeNode.id, fromNode.id);
+        if (!path) {
+          if (startId === fromNode.id || homeNode?.id === fromNode.id) {
+            path = { edges: [], length: 0 };
+          } else continue;
+        }
+        candidate = v;
+        pickPath = path;
+        break;
+      }
+      if (!candidate || !pickPath) continue;
+
+      job.claimedBy = candidate.id;
+      candidate.assignJob(job, pickPath, dropPath);
+      free.splice(free.indexOf(candidate), 1);
+    }
+  }
+
+  /** Tap opgave i listen → fremhæv A→B på kortet */
+  selectJob(jobId) {
+    const id = Number(jobId);
+    if (!Number.isFinite(id)) return;
+    const job = this.jobs.find((j) => j.id === id && j.active);
+    if (!job) return;
+    if (this.selectedJobId === id) {
+      this.selectedJobId = null;
+      this.selectedJobTimer = 0;
+      this.toast('Rute skjult');
+      this.syncUI();
+      return;
+    }
+    this.selectedJobId = id;
+    this.selectedJobTimer = 14;
+    this.toast(`${job.from.name} → ${job.to.name}`);
+    this.syncUI();
+  }
+
+  getSelectedJob() {
+    if (this.selectedJobId == null) return null;
+    return this.jobs.find((j) => j.id === this.selectedJobId && j.active) || null;
+  }
+
+  allPlacesConnected() {
+    if (this.places.length < 2) return true;
+    const start = this.places[0].nodeId;
+    const seen = new Set([start]);
+    const q = [start];
+    while (q.length) {
+      const id = q.shift();
+      for (const { next } of this.graph.neighbors(id)) {
+        if (!seen.has(next)) {
+          seen.add(next);
+          q.push(next);
+        }
+      }
+    }
+    return this.places.every((p) => seen.has(p.nodeId));
+  }
+
+  loop(now, gen) {
+    if (!this.running || gen !== this._loopGen) return;
+    const dt = Math.min(0.05, (now - this._last) / 1000);
+    this._last = now;
+    if (!this.paused) this.update(dt);
+    this.renderer.drawScene(this, this.camera);
+    requestAnimationFrame((t) => this.loop(t, gen));
+  }
+
+  update(dt) {
+    // Jobs spawn (trafikplanlægger → lidt oftere)
+    this.jobTimer += dt;
+    const spawnEvery = jobSpawnInterval(this.meta);
+    if (this.jobTimer > spawnEvery && this.jobs.filter((j) => j.active).length < 6) {
+      this.jobTimer = 0;
+      const j = generateJob(this.places, this.jobSpawnOpts());
+      if (j) {
+        this.jobs.push(j);
+        this.tryAssignJobs();
+      }
+    }
+
+    const ctx = {
+      graph: this.graph,
+      roadsById: this.roadsById,
+      findPath: (a, b) => this.graph.findPath(a, b),
+      nodeForPlace: (placeId) => this.graph.nodeForPlace(placeId)?.id ?? null,
+      onNeedAssign: () => this.tryAssignJobs(),
+      onDeliver: (v, amount) => {
+        if (!v.job) return;
+        const share = Math.round((v.job.reward * amount) / Math.max(1, v.job.amount));
+        this.money += share;
+        this.stats.delivered += amount;
+        if (typeof v.registerWear === 'function') v.registerWear(amount);
+        else v.wear = Math.min(100, (v.wear || 0) + amount * 1.15);
+        if (v.wear >= 75 && !v._wearWarned) {
+          v._wearWarned = true;
+          this.toast('🔧 En bil er slidt – service i by-shop');
+        }
+        addXp(this.meta, XP_REWARDS.deliver);
+        this.meta.totalDelivered = (this.meta.totalDelivered || 0) + amount;
+        saveMeta(this.meta);
+        playDeliver();
+        this.unlockAch('first_delivery');
+        bumpDaily(this.daily, 'deliver', amount);
+        this.refreshDailyUi();
+      },
+      onJobDone: (v, job) => {
+        if (job) {
+          job.active = false;
+          job.claimedBy = null;
+          this.stats.jobsDone += 1;
+          playJobDone();
+          this.toast(`Leveret: ${job.from.name} → ${job.to.name} ✓`);
+          if (job.type === 'express') this.unlockAch('express');
+          bumpDaily(this.daily, 'jobs', 1);
+          this.refreshDailyUi();
+          if (this.selectedJobId === job.id) {
+            this.selectedJobId = null;
+            this.selectedJobTimer = 0;
+          }
+        }
+        this.tryAssignJobs();
+        this.checkStars();
+        this.persistSession();
+        this.syncUI();
+      }
+    };
+
+    for (const v of this.vehicles) v.update(ctx, dt);
+
+    // Drop inactive jobs
+    this.jobs = this.jobs.filter((j) => j.active);
+    if (this.selectedJobId != null && !this.jobs.some((j) => j.id === this.selectedJobId)) {
+      this.selectedJobId = null;
+      this.selectedJobTimer = 0;
+    }
+
+    if (this.selectedJobTimer > 0) {
+      this.selectedJobTimer -= dt;
+      if (this.selectedJobTimer <= 0) this.selectedJobId = null;
+    }
+
+    if (this.toastTimer > 0) {
+      this.toastTimer -= dt;
+      if (this.toastTimer <= 0) this.ui.toast?.classList.remove('show');
+    }
+
+    // Periodic UI
+    this._uiAcc = (this._uiAcc || 0) + dt;
+    if (this._uiAcc > 0.35) {
+      this._uiAcc = 0;
+      this.syncUI();
+      this.tryAssignJobs();
+    }
+
+    // Autosave ~ every 4s
+    this._saveAcc = (this._saveAcc || 0) + dt;
+    if (this._saveAcc > 4) {
+      this._saveAcc = 0;
+      this.persistSession();
+    }
+  }
+
+  checkStars() {
+    if (!this.scenario) return;
+    const stars = evaluateStars(this.scenario, {
+      delivered: this.stats.delivered,
+      money: this.money,
+      allConnected: this.allPlacesConnected()
+    });
+    const prev = this.meta.stars[this.scenario.id] || 0;
+    if (stars > prev) {
+      const prevMeta = {
+        level: this.meta.level,
+        stars: { ...this.meta.stars }
+      };
+      setScenarioStars(this.meta, this.scenario.id, stars);
+      addXp(this.meta, XP_REWARDS.star * (stars - prev));
+      this.toast(`${'⭐'.repeat(stars)} Nye stjerner!`);
+      if (stars >= 1) this.unlockAch('star_1');
+      const unlocked = newlyUnlockedScenarios(prevMeta, this.meta);
+      if (unlocked.length) {
+        const names = unlocked.map((u) => u.name).join(', ');
+        setTimeout(() => this.toast(`🔓 Ny bane: ${names}`), 900);
+      }
+    }
+    // 3 stjerner → end-of-run (én gang pr. session)
+    if (stars >= 3 && !this._endRunShown) {
+      this._endRunShown = true;
+      this.showEndRun(stars);
+    }
+  }
+
+  showEndRun(stars) {
+    const panel = document.getElementById('end-run');
+    if (!panel) return;
+    const title = document.getElementById('end-run-title');
+    const body = document.getElementById('end-run-body');
+    const nextBtn = document.getElementById('end-run-next');
+    this.meta = loadMeta();
+    const nextId = nextUnlockedScenarioId(this.scenario?.id, this.meta);
+    const next = nextId ? SCENARIOS.find((s) => s.id === nextId) : null;
+    const chainNext = getScenario(nextScenarioId(this.scenario?.id));
+    const chainLocked =
+      chainNext &&
+      chainNext.id !== this.scenario?.id &&
+      !isScenarioUnlocked(chainNext, this.meta);
+    if (title) title.textContent = `${'⭐'.repeat(stars)} Bane klaret!`;
+    if (body) {
+      let nextLine = '';
+      if (next && next.id !== this.scenario?.id) {
+        nextLine = `<p class="muted">Næste: ${next.name}</p>`;
+      } else if (chainLocked) {
+        nextLine = `<p class="muted">🔒 ${unlockHint(chainNext, this.meta)}</p>`;
+      } else {
+        nextLine = `<p class="muted">Alle åbne baner er spillet – vælg fra menu</p>`;
+      }
+      body.innerHTML = `
+        <p><strong>${this.scenario?.name || 'Bane'}</strong></p>
+        <p>Leveret: <strong>${this.stats.delivered}</strong> · Jobs: <strong>${this.stats.jobsDone}</strong></p>
+        <p>Saldo: <strong>${this.money} kr</strong> · Level ${this.meta.level}</p>
+        ${nextLine}`;
+    }
+    panel.dataset.nextId = next && next.id !== this.scenario?.id ? nextId : '';
+    if (nextBtn) {
+      const canNext = !!(next && next.id !== this.scenario?.id);
+      nextBtn.disabled = !canNext;
+      nextBtn.textContent = canNext ? 'Næste bane' : 'Ingen ny bane';
+    }
+    panel.classList.remove('hidden');
+    this.paused = true;
+  }
+
+  hideEndRun() {
+    document.getElementById('end-run')?.classList.add('hidden');
+  }
+
+  continueAfterEndRun() {
+    this.hideEndRun();
+    this.paused = false;
+    this.toast('Fortsæt med at spille');
+    this.syncUI();
+  }
+
+  startNextScenarioFromEnd() {
+    const panel = document.getElementById('end-run');
+    this.meta = loadMeta();
+    let nextId = panel?.dataset?.nextId || '';
+    if (!nextId) nextId = nextUnlockedScenarioId(this.scenario?.id, this.meta) || '';
+    if (!nextId) {
+      this.toast('Ingen ulåst næste bane');
+      return;
+    }
+    const sc = getScenario(nextId);
+    if (!isScenarioUnlocked(sc, this.meta)) {
+      this.toast(unlockHint(sc, this.meta) || 'Banen er låst');
+      return;
+    }
+    this.hideEndRun();
+    this.startScenario(nextId);
+  }
+
+  refreshDailyUi() {
+    const strip = document.getElementById('daily-strip');
+    if (!strip) return;
+    this.daily = this.daily || loadDaily();
+    const ui = dailyUi(this.daily);
+    const label = document.getElementById('daily-label');
+    const prog = document.getElementById('daily-prog');
+    const claim = document.getElementById('daily-claim');
+    if (label) label.textContent = `${ui.icon} ${ui.label}`;
+    if (prog) prog.textContent = ui.claimed ? 'Hentet ✓' : ui.progress;
+    if (claim) {
+      claim.classList.toggle('hidden', !ui.ready);
+      claim.disabled = !ui.ready;
+    }
+    strip.classList.toggle('ready', ui.ready);
+    strip.classList.toggle('claimed', ui.claimed);
+  }
+
+  claimDailyReward() {
+    this.daily = loadDaily();
+    const res = claimDaily(this.daily);
+    if (!res.ok) {
+      if (res.reason === 'claimed') this.toast('Allerede hentet i dag');
+      else if (res.reason === 'incomplete') this.toast('Målet er ikke nået endnu');
+      else this.toast('Ingen belønning');
+      this.refreshDailyUi();
+      return;
+    }
+    addXp(this.meta, res.xp || 0);
+    this.money += res.money || 0;
+    this.toast(`Daglig belønning: +${res.xp} XP · +${res.money} kr (streak ${res.streak})`);
+    this.refreshDailyUi();
+    this.persistSession();
+    this.syncUI();
+  }
+
+  syncUI() {
+    if (!this.ui) return;
+    if (this.ui.money) this.ui.money.textContent = `${this.money} kr`;
+    if (this.ui.level) this.ui.level.textContent = `Lvl ${this.meta.level}`;
+    if (this.ui.delivered) this.ui.delivered.textContent = `${this.stats.delivered}`;
+    if (this.ui.fleet) this.ui.fleet.textContent = `${this.vehicles.length}`;
+    if (this.ui.jobs) {
+      const active = this.jobs.filter((j) => j.active).slice(0, 8);
+      this.ui.jobs.innerHTML = active.length
+        ? active
+            .map((j) => {
+              const sel = j.id === this.selectedJobId ? ' selected' : '';
+              const left = Math.max(0, j.amount - j.delivered);
+              return `<li class="job-item${sel}" data-job-id="${j.id}" role="button" tabindex="0" title="Vis rute på kortet">
+                ${jobLabel(j)}${j.claimedBy ? ' 🚗' : ''}
+                <span class="job-meta">${left}/${j.amount}</span>
+              </li>`;
+            })
+            .join('')
+        : '<li class="muted">Ingen opgaver endnu</li>';
+    }
+    if (this.ui.goals && this.scenario) {
+      const stars = evaluateStars(this.scenario, {
+        delivered: this.stats.delivered,
+        money: this.money,
+        allConnected: this.allPlacesConnected()
+      });
+      this.ui.goals.innerHTML = this.scenario.goals
+        .map((g) => {
+          const done = g.stars <= stars;
+          return `<li class="${done ? 'done' : ''}">${'⭐'.repeat(g.stars)} ${goalLabel(g)}</li>`;
+        })
+        .join('');
+    }
+    document.querySelectorAll('[data-tool]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.tool === this.tool);
+    });
+    const muteBtn = document.getElementById('btn-mute');
+    if (muteBtn) muteBtn.textContent = isMuted() ? '🔇' : '🔊';
+    const pauseBtn = document.getElementById('btn-pause');
+    if (pauseBtn) pauseBtn.textContent = this.paused ? '▶️' : '⏸️';
+    this.refreshDailyUi();
+  }
+}
+
+function simplify(points, minDist) {
+  if (points.length <= 2) return points;
+  const out = [points[0]];
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = out[out.length - 1];
+    if (Math.hypot(points[i].x - prev.x, points[i].y - prev.y) >= minDist) {
+      out.push(points[i]);
+    }
+  }
+  out.push(points[points.length - 1]);
+  return out;
+}

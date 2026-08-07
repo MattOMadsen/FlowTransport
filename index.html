@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#1e3a2f" />
+  <title>FlowTransport</title>
+  <link rel="stylesheet" href="style.css?v=20260806b" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="game"></canvas>
+
+    <!-- Start / nyt spil menu -->
+    <section id="menu" class="panel-screen">
+      <div class="menu-card">
+        <h1>FlowTransport</h1>
+        <p class="tagline">Tegn veje · kør jobs · hold byerne forbundet</p>
+        <div class="meta-row">
+          <span id="meta-level">Level 1</span>
+          <span id="meta-xp">0 XP</span>
+        </div>
+
+        <button type="button" id="btn-continue" class="continue-btn hidden">▶️ Fortsæt spil</button>
+
+        <h2>Nyt spil – vælg bane</h2>
+        <p class="menu-note">Vælger du en bane, starter et <strong>helt nyt spil</strong> (stjerner og level huskes). Nye baner låses op med stjerner på den forrige – eller via level.</p>
+        <div id="scenario-list" class="scenario-list"></div>
+        <p class="hint">Tip: Ét finger-træk tegner vej. 🛣️ opgraderer: 2-spor → motorvej (hurtigere – personbiler elsker motorvej). To fingre zoomer. Tryk på by for bil.</p>
+      </div>
+    </section>
+
+    <!-- HUD -->
+    <div id="hud" class="hidden">
+      <header class="top-hud">
+        <button type="button" id="btn-menu" class="icon-btn icon-btn-inline hud-menu-btn" title="Spilmenu">☰</button>
+        <div class="stat-pill" id="money">0 kr</div>
+        <div class="stat-pill soft" id="level">Lvl 1</div>
+        <div class="stat-pill soft">📦 <span id="delivered">0</span></div>
+        <div class="stat-pill soft">🚗 <span id="fleet">1</span></div>
+        <div class="hud-actions">
+          <button type="button" id="btn-global-shop" class="icon-btn icon-btn-inline" title="Ansæt folk">👷</button>
+          <button type="button" id="btn-mute" class="icon-btn icon-btn-inline" title="Lyd">🔊</button>
+          <button type="button" id="btn-pause" class="icon-btn icon-btn-inline" title="Pause">⏸️</button>
+        </div>
+      </header>
+
+      <div class="side-panel jobs-panel" id="side-panel">
+        <button type="button" class="panel-toggle" id="btn-toggle-panel" aria-expanded="true">
+          <span>Opgaver &amp; mål</span>
+          <span class="chevron" id="panel-chevron">▼</span>
+        </button>
+        <div class="panel-body" id="panel-body">
+          <div id="daily-strip" class="daily-strip">
+            <div class="daily-text">
+              <span id="daily-label">🎯 Dagligt mål</span>
+              <span id="daily-prog" class="daily-prog">0/0</span>
+            </div>
+            <button type="button" id="daily-claim" class="daily-claim hidden">Hent</button>
+          </div>
+          <h3>Opgaver</h3>
+          <ul id="job-list"></ul>
+          <h3>Mål</h3>
+          <ul id="goal-list"></ul>
+        </div>
+      </div>
+
+      <div id="end-run" class="end-run hidden" role="dialog" aria-labelledby="end-run-title">
+        <div class="end-run-card">
+          <h2 id="end-run-title">Bane klaret!</h2>
+          <div id="end-run-body"></div>
+          <div class="end-run-actions">
+            <button type="button" id="end-run-continue" class="tut-btn ghost">Fortsæt spil</button>
+            <button type="button" id="end-run-next" class="tut-btn">Næste bane</button>
+            <button type="button" id="end-run-menu" class="tut-btn ghost">Menu</button>
+          </div>
+        </div>
+      </div>
+
+      <canvas id="minimap" class="minimap" width="160" height="120" aria-label="Minimap"></canvas>
+
+      <div class="zoom-cluster">
+        <button type="button" id="btn-fit" class="icon-btn">Fit</button>
+      </div>
+
+      <div id="tutorial" class="tutorial hidden" role="dialog" aria-labelledby="tut-title">
+        <div class="tutorial-card">
+          <h3 id="tut-title">Velkommen</h3>
+          <p id="tut-body"></p>
+          <p id="tut-hint" class="tutorial-hint"></p>
+          <div class="tutorial-actions">
+            <button type="button" id="tut-skip" class="tut-btn ghost">Spring over</button>
+            <button type="button" id="tut-next" class="tut-btn">Næste</button>
+          </div>
+        </div>
+      </div>
+
+      <nav class="toolbar">
+        <button type="button" data-tool="draw" class="tool active" title="Tegn vej">✏️</button>
+        <button type="button" data-tool="upgrade" class="tool" title="Opgrader: 2-spor → motorvej">🛣️</button>
+        <button type="button" data-tool="erase" class="tool" title="Slet vej">🗑️</button>
+        <button type="button" data-tool="pan" class="tool" title="Flyt kort">✋</button>
+        <button type="button" id="btn-undo" class="tool" title="Fortryd">↩️</button>
+      </nav>
+
+      <div id="toast" class="toast"></div>
+
+      <div id="shop" class="sheet">
+        <div class="sheet-inner">
+          <div class="sheet-head">
+            <h3 class="shop-title">By</h3>
+            <button type="button" id="shop-close" class="icon-btn">✕</button>
+          </div>
+          <p class="muted">Køb bil – den henter opgaver automatisk når der er vej.</p>
+          <div class="shop-grid shop-grid-4">
+            <button type="button" data-buy="car" class="shop-item">
+              <span>🚗 Personbil</span>
+              <strong>220 kr</strong>
+              <small>Personer · cap 4</small>
+            </button>
+            <button type="button" data-buy="bus" class="shop-item">
+              <span>🚌 Bus</span>
+              <strong>420 kr</strong>
+              <small>Mange · cap 10</small>
+            </button>
+            <button type="button" data-buy="van" class="shop-item">
+              <span>🚐 Varebil</span>
+              <strong>300 kr</strong>
+              <small>Hurtig gods · cap 5</small>
+            </button>
+            <button type="button" data-buy="truck" class="shop-item">
+              <span>🚚 Lastbil</span>
+              <strong>380 kr</strong>
+              <small>Gods · cap 8</small>
+            </button>
+          </div>
+          <h4 class="shop-sub">Bygninger</h4>
+          <div id="shop-buildings" class="shop-grid shop-grid-3"></div>
+          <h4 class="shop-sub">Flåde i byen</h4>
+          <p class="muted shop-hint">Opgrader last (★) eller sælg ledig bil (~55&nbsp;%).</p>
+          <div id="shop-fleet" class="shop-fleet"></div>
+        </div>
+      </div>
+
+      <div id="global-shop" class="sheet">
+        <div class="sheet-inner">
+          <div class="sheet-head">
+            <h3>👷 Ansæt folk</h3>
+            <button type="button" id="global-shop-close" class="icon-btn">✕</button>
+          </div>
+          <p class="muted">Permanente medarbejdere (gemmes med profil). De sænker priser / hjælper – de bygger <strong>ikke</strong> veje for dig offline.</p>
+          <div id="global-shop-list" class="shop-grid"></div>
+        </div>
+      </div>
+
+      <div id="game-menu" class="sheet" role="dialog" aria-labelledby="game-menu-title">
+        <div class="sheet-inner game-menu-inner">
+          <div class="sheet-head">
+            <h3 id="game-menu-title">Spilmenu</h3>
+            <button type="button" id="game-menu-close" class="icon-btn" title="Luk">✕</button>
+          </div>
+          <p class="muted game-menu-note">Spillet gemmes automatisk, når du går til startmenu.</p>
+          <div class="game-menu-list">
+            <button type="button" id="game-menu-resume" class="game-menu-item">▶️ Fortsæt</button>
+            <button type="button" id="game-menu-pause" class="game-menu-item">⏸️ Pause</button>
+            <button type="button" id="game-menu-mute" class="game-menu-item">🔊 Lyd</button>
+            <button type="button" id="game-menu-tutorial" class="game-menu-item">📘 Vis tutorial</button>
+            <button type="button" id="game-menu-home" class="game-menu-item game-menu-item-danger">🏠 Til startmenu</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="js/main.js?v=20260806b"></script>
+</body>
+</html>
